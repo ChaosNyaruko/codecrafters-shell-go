@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 )
 
@@ -34,6 +35,10 @@ var builtins = map[string]builtin{
 		_, ok := builtinSet[cmd]
 		if ok {
 			return fmt.Sprintf("%s is a shell builtin\n", cmd), nil
+		}
+		path, err := exec.LookPath(cmd)
+		if err == nil {
+			return fmt.Sprintf("%s is %s\n", cmd, path), nil
 		}
 		return fmt.Sprintf("%s: not found\n", cmd), nil
 	},
