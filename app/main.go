@@ -12,6 +12,12 @@ var _ = fmt.Print
 
 type builtin func(...string) (string, error)
 
+var builtinSet = map[string]struct{}{
+	"exit": {},
+	"echo": {},
+	"type": {},
+}
+
 var builtins = map[string]builtin{
 	"exit": func(...string) (string, error) {
 		os.Exit(0)
@@ -19,6 +25,17 @@ var builtins = map[string]builtin{
 	},
 	"echo": func(args ...string) (string, error) {
 		return strings.Join(args, " ") + "\n", nil
+	},
+	"type": func(args ...string) (string, error) {
+		if len(args) == 0 {
+			return "\n", nil
+		}
+		cmd := args[0]
+		_, ok := builtinSet[cmd]
+		if ok {
+			return fmt.Sprintf("%s is a shell builtin\n", cmd), nil
+		}
+		return fmt.Sprintf("%s: not found\n", cmd), nil
 	},
 }
 
@@ -48,7 +65,7 @@ func main() {
 		}
 		f, ok := builtins[cmd]
 		if !ok {
-			fmt.Printf("%s: command not found\n", line)
+			fmt.Printf("%s: command not found\n", cmd)
 		} else {
 			stdout, err := f(args...)
 			if err != nil {
