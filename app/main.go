@@ -12,12 +12,14 @@ var _ = fmt.Print
 func main() {
 	// REPL:
 	// read/eval/print/loop
-	fmt.Print("$ ")
-	scanner := bufio.NewScanner(os.Stdin)
-	scanned := scanner.Scan()
-	if !scanned {
-		os.Exit(69)
+	for {
+		fmt.Print("$ ")
+		scanner := bufio.NewScanner(os.Stdin)
+		scanned := scanner.Scan()
+		if !scanned {
+			os.Exit(69)
+		}
+		line := scanner.Text()
+		fmt.Printf("%s: command not found\n", line)
 	}
-	line := scanner.Text()
-	fmt.Printf("%s: command not found\n", line)
 }
