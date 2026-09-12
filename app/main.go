@@ -32,7 +32,13 @@ var builtins = map[string]builtin{
 			return "\n", nil
 		}
 		path := args[0]
-		aPath, err := filepath.Abs(path)
+		var err error
+		var aPath string
+		if strings.TrimSpace(path) == "~" {
+			aPath = os.Getenv("HOME")
+		} else {
+			aPath, err = filepath.Abs(path)
+		}
 		if err != nil {
 			return "", err
 		}
