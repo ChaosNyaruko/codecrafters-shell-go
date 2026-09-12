@@ -36,7 +36,11 @@ var builtins = map[string]builtin{
 		if err != nil {
 			return "", err
 		}
-		return "", os.Chdir(aPath)
+		err = os.Chdir(aPath)
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Sprintf("cd: %s: No such file or directory\n", aPath), nil
+		}
+		return "", err
 	},
 	"pwd": func(...string) (string, error) {
 		wd, err := os.Getwd()
