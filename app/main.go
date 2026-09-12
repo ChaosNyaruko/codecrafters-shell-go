@@ -18,9 +18,23 @@ var builtinSet = map[string]struct{}{
 	"exit": {},
 	"echo": {},
 	"type": {},
+	"pwd":  {},
+}
+
+var wd string
+
+func init() {
+	var err error
+	wd, err = os.Getwd()
+	if err != nil {
+		panic(err)
+	}
 }
 
 var builtins = map[string]builtin{
+	"pwd": func(...string) (string, error) {
+		return wd + "\n", nil
+	},
 	"exit": func(...string) (string, error) {
 		os.Exit(0)
 		return "", nil
@@ -75,7 +89,7 @@ func main() {
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "execute %v error: %v", cmd, err)
 			} else {
-				fmt.Fprintf(os.Stdout, stdout)
+				fmt.Fprintf(os.Stdout, "%s", stdout)
 			}
 			continue
 		}
