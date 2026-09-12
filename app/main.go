@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -19,20 +20,29 @@ var builtinSet = map[string]struct{}{
 	"echo": {},
 	"type": {},
 	"pwd":  {},
+	"cd":   {},
 }
 
-var wd string
-
 func init() {
-	var err error
-	wd, err = os.Getwd()
-	if err != nil {
-		panic(err)
-	}
 }
 
 var builtins = map[string]builtin{
+	"cd": func(args ...string) (string, error) {
+		if len(args) == 0 {
+			return "\n", nil
+		}
+		path := args[0]
+		aPath, err := filepath.Abs(path)
+		if err != nil {
+			return "", err
+		}
+		return "", os.Chdir(aPath)
+	},
 	"pwd": func(...string) (string, error) {
+		wd, err := os.Getwd()
+		if err != nil {
+			return "", err
+		}
 		return wd + "\n", nil
 	},
 	"exit": func(...string) (string, error) {
