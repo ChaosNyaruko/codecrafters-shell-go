@@ -87,7 +87,8 @@ var builtins = map[string]builtin{
 
 const (
 	normal = iota
-	quoteStarted
+	singleQuoteStarted
+	doubleQuoteStarted
 )
 
 func parseInput(line string) (string, []string, error) {
@@ -96,17 +97,26 @@ func parseInput(line string) (string, []string, error) {
 	var cur string
 	for _, c := range line {
 		if c == ' ' {
-			if status == quoteStarted {
+			if status == singleQuoteStarted || status == doubleQuoteStarted {
 				cur += string(c)
 			} else if status == normal && cur != "" {
 				inputs = append(inputs, cur)
 				cur = ""
 			}
 		} else if c == '\'' {
-			if status == quoteStarted {
+			if status == singleQuoteStarted {
+				status = normal
+			} else if status == doubleQuoteStarted {
+				cur += string(c)
+			} else {
+				status = singleQuoteStarted
+			}
+		} else if c == '"' {
+			if status == doubleQuoteStarted {
 				status = normal
 			} else {
-				status = quoteStarted
+				// TODO: the escaping logic might happen here
+				status = doubleQuoteStarted
 			}
 		} else {
 			cur += string(c)
