@@ -89,43 +89,85 @@ const (
 	normal = iota
 	singleQuoteStarted
 	doubleQuoteStarted
+	escaping
 )
+
+var normalEscapes = map[rune]rune{
+	// TODO
+}
+
+var quotedEscapes = map[rune]rune{
+	'n':  '\n',
+	't':  '\t',
+	'\'': '\'',
+	'"':  '"',
+	' ':  ' ',
+	'$':  '?', // TODO
+}
 
 func parseInput(line string) (string, []string, error) {
 	status := normal
+	beStatus := normal // before escaping status
 	inputs := make([]string, 0, 2)
 	var cur string
 	for _, c := range line {
-		if c == ' ' {
-			if status == singleQuoteStarted || status == doubleQuoteStarted {
-				cur += string(c)
-			} else if status == normal && cur != "" {
-				inputs = append(inputs, cur)
-				cur = ""
-			}
-		} else if c == '\'' {
-			if status == singleQuoteStarted {
-				status = normal
-			} else if status == doubleQuoteStarted {
-				cur += string(c)
-			} else {
-				status = singleQuoteStarted
-			}
-		} else if c == '"' {
-			if status == doubleQuoteStarted {
+		switch status {
+		case singleQuoteStarted:
+			beStatus = singleQuoteStarted
+			if c == '\'' {
 				status = normal
 			} else {
-				// TODO: the escaping logic might happen here
+				cur += string(c)
+			}
+		case doubleQuoteStarted:
+			// echo "example  hello"  "test""world"
+			beStatus = doubleQuoteStarted
+			if c == '"' {
+				status = normal
+			} else if c == '\\' {
+				status = escaping
+			} else {
+				cur += string(c)
+			}
+		case normal:
+			beStatus = normal
+			// TODO: the escaping logic might happen here
+			if c == '"' {
 				status = doubleQuoteStarted
+			} else if c == '\'' {
+				status = singleQuoteStarted
+			} else if c == ' ' {
+				if cur != "" {
+					inputs = append(inputs, cur)
+					cur = ""
+				} else {
+					continue
+				}
+			} else if c == '\\' {
+				status = escaping
+			} else {
+				cur += string(c)
 			}
-		} else {
-			cur += string(c)
+		case escaping:
+			es := normalEscapes
+			if beStatus == doubleQuoteStarted {
+				es = quotedEscapes
+			}
+			escaped, ok := es[c]
+			// not processing "$" as envs yet
+			if !ok {
+				cur += string(c)
+			} else {
+				cur += string(escaped)
+			}
+			status = beStatus
+		default:
 		}
 
 	}
 
 	if status != normal {
-		return "", nil, fmt.Errorf("single quoted not closed")
+		return "", nil, fmt.Errorf("bad status: %v", status)
 	}
 
 	if cur != "" {
