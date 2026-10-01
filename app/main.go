@@ -60,7 +60,13 @@ var builtins = map[string]builtin{
 		return "", nil
 	},
 	"echo": func(args ...string) (string, error) {
-		return strings.Join(args, " ") + "\n", nil
+		lf := "\n"
+		echoFrom := 0
+		if len(args) >= 1 && args[0] == "-n" {
+			lf = ""
+			echoFrom += 1
+		}
+		return fmt.Sprintf("%s%s", strings.Join(args[echoFrom:], " "), lf), nil
 	},
 	"type": func(args ...string) (string, error) {
 		if len(args) == 0 {
@@ -79,11 +85,45 @@ var builtins = map[string]builtin{
 	},
 }
 
+const (
+	normal = iota
+	quoteStarted
+)
+
 func parseInput(line string) (string, []string, error) {
-	parts := strings.Split(line, " ")
-	cmd := parts[0]
-	args := make([]string, len(parts[1:]))
-	copy(args, parts[1:])
+	status := normal
+	inputs := make([]string, 0, 2)
+	var cur string
+	for _, c := range line {
+		if c == ' ' {
+			if status == quoteStarted {
+				cur += string(c)
+			} else if status == normal && cur != "" {
+				inputs = append(inputs, cur)
+				cur = ""
+			}
+		} else if c == '\'' {
+			if status == quoteStarted {
+				status = normal
+			} else {
+				status = quoteStarted
+			}
+		} else {
+			cur += string(c)
+		}
+
+	}
+
+	if status != normal {
+		return "", nil, fmt.Errorf("single quoted not closed")
+	}
+
+	if cur != "" {
+		inputs = append(inputs, cur)
+	}
+	cmd := inputs[0]
+	args := inputs[1:]
+	// fmt.Fprintf(os.Stderr, "parse inputs: cmd: %s, args: %#v\n", cmd, args)
 	return cmd, args, nil
 }
 
