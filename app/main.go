@@ -244,6 +244,20 @@ func getRedirectIfPossible(args []string) ([]string, *os.File, *os.File, error) 
 				return args, os.Stdout, os.Stderr, err
 			}
 			argsEnd -= 2
+		} else if (outfd == os.Stdout) && (args[i-2] == ">>" || args[i-2] == "1>>") {
+			fname := args[i-1]
+			outfd, err = os.OpenFile(fname, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o666)
+			if err != nil {
+				return args, os.Stdout, os.Stderr, err
+			}
+			argsEnd -= 2
+		} else if (errfd == os.Stderr) && args[i-2] == "2>>" {
+			fname := args[i-1]
+			errfd, err = os.OpenFile(fname, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o666)
+			if err != nil {
+				return args, os.Stdout, os.Stderr, err
+			}
+			argsEnd -= 2
 		} else if (errfd == os.Stderr) && args[i-2] == "2>" {
 			fname := args[i-1]
 			errfd, err = os.Create(fname)

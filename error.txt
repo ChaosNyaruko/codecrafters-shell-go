@@ -1,1 +1,2 @@
 ls: cannot access 'jfdlsfj': No such file or directory
+cat: fdjskfdj: No such file or directory
