@@ -226,17 +226,35 @@ func main() {
 
 // getRedirectIfPossible returns args after trimming redirect directives, redirected stdout, redirected, stderr
 func getRedirectIfPossible(args []string) ([]string, *os.File, *os.File, error) {
+	outfd := os.Stdout
+	errfd := os.Stderr
+	var err error
+
 	if len(args) < 2 {
 		return args, os.Stdout, os.Stderr, nil
 	}
-	n := len(args)
-	if args[n-2] == ">" || args[n-2] == "1>" {
-		fname := args[n-1]
-		outfd, err := os.Create(fname)
-		if err != nil {
-			return args, os.Stdout, os.Stderr, err
+	i := len(args)
+	argsEnd := len(args)
+	for ; i-1 >= 0 && i-2 >= 0; i -= 2 {
+		// right side takes higher precedence
+		if (outfd == os.Stdout) && (args[i-2] == ">" || args[i-2] == "1>") {
+			fname := args[i-1]
+			outfd, err = os.Create(fname)
+			if err != nil {
+				return args, os.Stdout, os.Stderr, err
+			}
+			argsEnd -= 2
+		} else if (errfd == os.Stderr) && args[i-2] == "2>" {
+			fname := args[i-1]
+			errfd, err = os.Create(fname)
+			if err != nil {
+				return args, os.Stdout, os.Stderr, err
+			}
+			argsEnd -= 2
 		}
-		return args[:n-2], outfd, os.Stderr, nil
+		if outfd != os.Stdout && errfd != os.Stderr {
+			break
+		}
 	}
-	return args, os.Stdout, os.Stderr, nil
+	return args[:argsEnd], outfd, errfd, nil
 }
