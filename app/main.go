@@ -93,7 +93,7 @@ const (
 )
 
 var normalEscapes = map[rune]rune{
-	// TODO
+	// NOTE: without quotes, we just "escape" as-is
 }
 
 var quotedEscapes = map[rune]rune{
@@ -102,7 +102,7 @@ var quotedEscapes = map[rune]rune{
 	'\'': '\'',
 	'"':  '"',
 	' ':  ' ',
-	'$':  '?', // TODO
+	'$':  '?', // TODO: we don't support env vars
 }
 
 func parseInput(line string) (string, []string, error) {
@@ -131,7 +131,6 @@ func parseInput(line string) (string, []string, error) {
 			}
 		case normal:
 			beStatus = normal
-			// TODO: the escaping logic might happen here
 			if c == '"' {
 				status = doubleQuoteStarted
 			} else if c == '\'' {
@@ -154,7 +153,7 @@ func parseInput(line string) (string, []string, error) {
 				es = quotedEscapes
 			}
 			escaped, ok := es[c]
-			// not processing "$" as envs yet
+			// TODO: not processing "$" as envs yet
 			if !ok {
 				cur += string(c)
 			} else {
@@ -195,27 +194,49 @@ func main() {
 			fmt.Fprintf(os.Stderr, "parse error: %v", err)
 			continue
 		}
+		args, stdout, stderr, err := getRedirectIfPossible(args)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "redirect error : %v", err)
+			continue
+		}
 		f, ok := builtins[cmd]
 		if ok {
-			stdout, err := f(args...)
+			output, err := f(args...)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "execute %v error: %v", cmd, err)
+				// fmt.Fprintf(stderr, "execute %v error: %v", cmd, err)
 			} else {
-				fmt.Fprintf(os.Stdout, "%s", stdout)
+				fmt.Fprintf(stdout, "%s", output)
 			}
 			continue
 		}
 		proc := exec.Command(cmd, args...)
-		proc.Stdout = os.Stdout
-		proc.Stderr = os.Stderr
+		proc.Stdout = stdout
+		proc.Stderr = stderr
 		proc.Stdin = os.Stdin
 		err = proc.Run()
 		if err != nil {
 			if errors.Is(err, exec.ErrNotFound) {
 				fmt.Printf("%s: command not found\n", cmd)
 			} else {
-				fmt.Fprintf(os.Stderr, "exec %s error: %v\n", cmd, err)
+				// fmt.Fprintf(os.Stderr, "exec %s error: %v\n", cmd, err)
 			}
 		}
 	}
+}
+
+// getRedirectIfPossible returns args after trimming redirect directives, redirected stdout, redirected, stderr
+func getRedirectIfPossible(args []string) ([]string, *os.File, *os.File, error) {
+	if len(args) < 2 {
+		return args, os.Stdout, os.Stderr, nil
+	}
+	n := len(args)
+	if args[n-2] == ">" || args[n-2] == "1>" {
+		fname := args[n-1]
+		outfd, err := os.Create(fname)
+		if err != nil {
+			return args, os.Stdout, os.Stderr, err
+		}
+		return args[:n-2], outfd, os.Stderr, nil
+	}
+	return args, os.Stdout, os.Stderr, nil
 }
