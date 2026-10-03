@@ -1,13 +1,14 @@
 package main
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/chzyer/readline"
 )
 
 // Ensures gofmt doesn't remove the "fmt" import in stage 1 (feel free to remove this!)
@@ -178,17 +179,45 @@ func parseInput(line string) (string, []string, error) {
 	return cmd, args, nil
 }
 
+type BuiltinCompleter struct {
+}
+
+// Readline will pass the whole line and current offset to it
+// Completer need to pass all the candidates, and how long they shared the same characters in line
+// Example:
+//
+//	[go, git, git-shell, grep]
+//	Do("g", 1) => ["o", "it", "it-shell", "rep"], 1
+//	Do("gi", 2) => ["t", "t-shell"], 2
+//	Do("git", 3) => ["", "-shell"], 3
+func (cc *BuiltinCompleter) Do(line []rune, pos int) (newline [][]rune, length int) {
+	candidates := [][]rune{}
+	// TODO: using Trie might be a good idea to improve the perf, but we don't need it yet.
+	for cmd := range builtinSet {
+		if strings.HasPrefix(cmd, string(line)) {
+			candidates = append(candidates, append([]rune(cmd[len(line):]), ' '))
+		}
+	}
+	return candidates, len(line)
+}
+
 func main() {
 	// REPL:
 	// read/eval/print/loop
+	rl, err := readline.NewEx(&readline.Config{
+		Prompt:       "$ ",
+		AutoComplete: &BuiltinCompleter{},
+	})
+	if err != nil {
+		panic(err)
+	}
+	defer rl.Close()
 	for {
-		fmt.Print("$ ")
-		scanner := bufio.NewScanner(os.Stdin)
-		scanned := scanner.Scan()
-		if !scanned {
-			os.Exit(69)
+		line, err := rl.Readline()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "readline error: %v", err)
+			continue
 		}
-		line := scanner.Text()
 		cmd, args, err := parseInput(line)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "parse error: %v", err)
