@@ -198,6 +198,9 @@ func (cc *BuiltinCompleter) Do(line []rune, pos int) (newline [][]rune, length i
 			candidates = append(candidates, append([]rune(cmd[len(line):]), ' '))
 		}
 	}
+	if len(candidates) == 0 {
+		return [][]rune{{0x7}}, 0
+	}
 	return candidates, len(line)
 }
 
