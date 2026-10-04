@@ -179,7 +179,7 @@ func parseInput(line string) (string, []string, error) {
 	return cmd, args, nil
 }
 
-type BuiltinCompleter struct {
+type CommandCompleter struct {
 }
 
 // Readline will pass the whole line and current offset to it
@@ -190,11 +190,17 @@ type BuiltinCompleter struct {
 //	Do("g", 1) => ["o", "it", "it-shell", "rep"], 1
 //	Do("gi", 2) => ["t", "t-shell"], 2
 //	Do("git", 3) => ["", "-shell"], 3
-func (cc *BuiltinCompleter) Do(line []rune, pos int) (newline [][]rune, length int) {
+func (cc *CommandCompleter) Do(line []rune, pos int) (newline [][]rune, length int) {
 	candidates := [][]rune{}
-	// TODO: using Trie might be a good idea to improve the perf, but we don't need it yet.
+	// NOTE: using Trie might be a good idea to improve the perf, but we don't need it yet.
 	for cmd := range builtinSet {
-		if strings.HasPrefix(cmd, string(line)) {
+		if strings.HasPrefix(cmd, string(line[:pos])) {
+			candidates = append(candidates, append([]rune(cmd[len(line):]), ' '))
+		}
+	}
+	exes := getAllExecutables()
+	for _, cmd := range exes {
+		if strings.HasPrefix(cmd, string(line[:pos])) {
 			candidates = append(candidates, append([]rune(cmd[len(line):]), ' '))
 		}
 	}
@@ -204,12 +210,49 @@ func (cc *BuiltinCompleter) Do(line []rune, pos int) (newline [][]rune, length i
 	return candidates, len(line)
 }
 
+func getAllExecutables() []string {
+	seen := make(map[string]struct{})
+	res := []string{}
+	path := os.Getenv("PATH")
+	for _, dir := range filepath.SplitList(path) {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			info, err := e.Info()
+			if err != nil {
+				continue
+			}
+			m := info.Mode()
+			name := info.Name()
+			// owner rwx oct
+			// group rwx
+			// other rwx
+			//       1
+			//        1
+			//         1
+			if m&0o111 != 0 {
+				// NOTE: we don't cover basic unix ACL
+				if _, ok := seen[name]; !ok {
+					res = append(res, name)
+					seen[name] = struct{}{}
+				}
+			}
+		}
+	}
+	return res
+}
+
 func main() {
 	// REPL:
 	// read/eval/print/loop
 	rl, err := readline.NewEx(&readline.Config{
 		Prompt:       "$ ",
-		AutoComplete: &BuiltinCompleter{},
+		AutoComplete: &CommandCompleter{},
 	})
 	if err != nil {
 		panic(err)
