@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/chzyer/readline"
@@ -179,7 +180,14 @@ func parseInput(line string) (string, []string, error) {
 	return cmd, args, nil
 }
 
+const (
+	tabInit    = 0
+	tabPending = 1 // completing
+)
+
 type CommandCompleter struct {
+	tabStatus int
+	t         *readline.Terminal
 }
 
 // Readline will pass the whole line and current offset to it
@@ -191,23 +199,67 @@ type CommandCompleter struct {
 //	Do("gi", 2) => ["t", "t-shell"], 2
 //	Do("git", 3) => ["", "-shell"], 3
 func (cc *CommandCompleter) Do(line []rune, pos int) (newline [][]rune, length int) {
+	// fmt.Printf("[do]line: %v, pos: %v, status: %v\n", line, pos, cc.tabStatus)
 	candidates := [][]rune{}
+	rawCandidates := []string{}
+	seen := make(map[string]struct{})
 	// NOTE: using Trie might be a good idea to improve the perf, but we don't need it yet.
 	for cmd := range builtinSet {
 		if strings.HasPrefix(cmd, string(line[:pos])) {
 			candidates = append(candidates, append([]rune(cmd[len(line):]), ' '))
+			rawCandidates = append(rawCandidates, cmd)
+			seen[cmd] = struct{}{}
 		}
 	}
 	exes := getAllExecutables()
 	for _, cmd := range exes {
+		_, ok := seen[cmd]
+		if ok {
+			continue
+		}
 		if strings.HasPrefix(cmd, string(line[:pos])) {
 			candidates = append(candidates, append([]rune(cmd[len(line):]), ' '))
+			rawCandidates = append(rawCandidates, cmd)
+			seen[cmd] = struct{}{}
 		}
 	}
+	// prefix := line[:pos]
+	// fmt.Println("prefix: ", prefix)
+	// fmt.Println("raw: ", rawCandidates)
+	// fmt.Println("seen: ", seen)
+	// fmt.Println("candidates: ", candidates)
 	if len(candidates) == 0 {
-		return [][]rune{{0x7}}, 0
+		cc.tabStatus = tabInit
+		cc.t.Bell()
+		return [][]rune{}, 0
 	}
-	return candidates, len(line)
+	if len(candidates) == 1 {
+		cc.tabStatus = tabInit
+		return candidates, pos
+	}
+	if cc.tabStatus == tabInit {
+		cc.tabStatus = tabPending
+		cc.t.Bell()
+		return [][]rune{}, 0
+	}
+	// else consecutive tabs
+	// NOTE: very bad performance, but we are focusing on the correctness now
+	first := true
+	slices.Sort(rawCandidates)
+	for _, cmd := range rawCandidates {
+		if first {
+			cc.t.Write([]byte("\n" + string(cmd)))
+			first = false
+		} else {
+			cc.t.Write([]byte(" " + string(cmd)))
+		}
+	}
+	// cc.t.Write([]byte{'\n'})
+	// NOTE: We need "flush" to pass the test
+	// BUG: when <Tab>ed once, all subsequent tabs will not trigger a bell when multiple cands exist, due to non-completed status management
+	// OnChanged really has bizarre behaviour, if enabled (and without this flush, test failed), the output will have a leading prompt, which is not what we want
+	cc.t.Write([]byte("\n$ " + string(line)))
+	return [][]rune{}, 0
 }
 
 func getAllExecutables() []string {
@@ -247,13 +299,29 @@ func getAllExecutables() []string {
 	return res
 }
 
+//	type Listener interface {
+//		OnChange(line []rune, pos int, key rune) (newLine []rune, newPos int, ok bool)
+//	}
+
+func (cc *CommandCompleter) OnChange(line []rune, pos int, key rune) (newLine []rune, newPos int, ok bool) {
+	// fmt.Printf("[onchange]line: %v, pos: %d, key: %v\n", line, pos, key)
+	if cc.tabStatus == tabPending && key != '\t' {
+		cc.tabStatus = tabInit
+		return line, pos, true
+	}
+	return line, pos, true
+}
+
 func main() {
 	// REPL:
 	// read/eval/print/loop
+	cc := &CommandCompleter{}
 	rl, err := readline.NewEx(&readline.Config{
 		Prompt:       "$ ",
-		AutoComplete: &CommandCompleter{},
+		AutoComplete: cc,
+		Listener:     nil,
 	})
+	cc.t = rl.Terminal
 	if err != nil {
 		panic(err)
 	}
