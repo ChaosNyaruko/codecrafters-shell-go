@@ -107,12 +107,13 @@ var quotedEscapes = map[rune]rune{
 	'$':  '?', // TODO: we don't support env vars
 }
 
-func parseInput(line string) (string, []string, error) {
+func parseInput(line string) (string, []string, int, error) {
 	status := normal
+	cmdEndAt := len(line)
 	beStatus := normal // before escaping status
 	inputs := make([]string, 0, 2)
 	var cur string
-	for _, c := range line {
+	for i, c := range line {
 		switch status {
 		case singleQuoteStarted:
 			beStatus = singleQuoteStarted
@@ -139,6 +140,10 @@ func parseInput(line string) (string, []string, error) {
 				status = singleQuoteStarted
 			} else if c == ' ' {
 				if cur != "" {
+					if len(inputs) == 0 {
+						// NOTE: might have bug in non-ASCII unicodes
+						cmdEndAt = i
+					}
 					inputs = append(inputs, cur)
 					cur = ""
 				} else {
@@ -168,7 +173,7 @@ func parseInput(line string) (string, []string, error) {
 	}
 
 	if status != normal {
-		return "", nil, fmt.Errorf("bad status: %v", status)
+		return "", nil, cmdEndAt, fmt.Errorf("bad status: %v", status)
 	}
 
 	if cur != "" {
@@ -177,7 +182,7 @@ func parseInput(line string) (string, []string, error) {
 	cmd := inputs[0]
 	args := inputs[1:]
 	// fmt.Fprintf(os.Stderr, "parse inputs: cmd: %s, args: %#v\n", cmd, args)
-	return cmd, args, nil
+	return cmd, args, cmdEndAt, nil
 }
 
 const (
@@ -185,9 +190,14 @@ const (
 	tabPending = 1 // completing
 )
 
+const (
+	completionCmdMode = iota
+	completionFilenameMode
+)
+
 type CommandCompleter struct {
 	tabStatus int
-	t         *readline.Terminal
+	instance  *readline.Instance
 }
 
 // Readline will pass the whole line and current offset to it
@@ -202,76 +212,115 @@ func (cc *CommandCompleter) Do(line []rune, pos int) (newline [][]rune, length i
 	// fmt.Printf("[do]line: %v, pos: %v, status: %v\n", line, pos, cc.tabStatus)
 	candidates := []string{}
 	seen := make(map[string]struct{})
+	// build candidates
 	// NOTE: using Trie might be a good idea to improve the perf, but we don't need it yet.
-	for cmd := range builtinSet {
-		if strings.HasPrefix(cmd, string(line[:pos])) {
-			candidates = append(candidates, cmd)
-			seen[cmd] = struct{}{}
+	mode, prefix := getCompletionMode(line, pos)
+	if mode == completionCmdMode {
+		for cmd := range builtinSet {
+			if strings.HasPrefix(cmd, string(prefix)) {
+				candidates = append(candidates, cmd)
+				seen[cmd] = struct{}{}
+			}
 		}
+		exes := getAllExecutables()
+		for _, cmd := range exes {
+			_, ok := seen[cmd]
+			if ok {
+				continue
+			}
+			if strings.HasPrefix(cmd, string(prefix)) {
+				candidates = append(candidates, cmd)
+				seen[cmd] = struct{}{}
+			}
+		}
+	} else if mode == completionFilenameMode {
+		wd, err := os.Getwd()
+		if err != nil {
+			panic(err)
+		}
+		ents, err := os.ReadDir(wd)
+		if err != nil {
+			return [][]rune{}, 0
+		}
+		for _, ent := range ents {
+			name := ent.Name()
+			if strings.HasPrefix(name, string(prefix)) {
+				candidates = append(candidates, name)
+				seen[name] = struct{}{}
+			}
+		}
+	} else {
+		panic(fmt.Sprintf("unreachable completion mode: %v", mode))
 	}
-	exes := getAllExecutables()
-	for _, cmd := range exes {
-		_, ok := seen[cmd]
-		if ok {
-			continue
-		}
-		if strings.HasPrefix(cmd, string(line[:pos])) {
-			candidates = append(candidates, cmd)
-			seen[cmd] = struct{}{}
-		}
-	}
-	// prefix := line[:pos]
-	// fmt.Println("prefix: ", prefix)
-	// fmt.Println("seen: ", seen)
-	// fmt.Println("candidates: ", candidates)
+	// fmt.Printf("[get mode] line: %v, pos: %d, mode: %d, prefix: %q\n", line, pos, mode, prefix)
+	// fmt.Printf("[candidates]: %v", candidates)
 	if len(candidates) == 0 {
 		cc.tabStatus = tabInit
-		cc.t.Bell()
+		cc.instance.Terminal.Bell()
 		return [][]rune{}, 0
 	}
 	if len(candidates) == 1 {
 		cc.tabStatus = tabInit
-		return [][]rune{[]rune(candidates[0][pos:] + " ")}, pos
+		return [][]rune{[]rune(candidates[0][len(prefix):] + " ")}, pos
 	}
 
 	// partial completion
 	commonPrefix := longestCommonPrefix(candidates)
+	// fmt.Printf("common prefix: %q, pos: %d\n", commonPrefix, pos)
 	if len(commonPrefix) > pos {
 		// gr|
 		// gr|e
 		// gr|ub-mk
 		// gr|ub-me
 		// ....
-		return [][]rune{[]rune(commonPrefix[pos:])}, len(commonPrefix)
+		return [][]rune{[]rune(commonPrefix[len(prefix):])}, len(commonPrefix)
 	}
 
 	if cc.tabStatus == tabInit {
 		cc.tabStatus = tabPending
-		cc.t.Bell()
+		cc.instance.Terminal.Bell()
 		return [][]rune{}, 0
 	}
+	// fmt.Printf("pending: candidates: %v\n", candidates)
 	// else consecutive tabs
 	// NOTE: very bad performance, but we are focusing on the correctness now
 	first := true
 	slices.Sort(candidates)
 	for _, cmd := range candidates {
 		if first {
-			cc.t.Write([]byte("\n" + string(cmd)))
+			cc.instance.Terminal.Write([]byte("\n" + string(cmd)))
 			first = false
 		} else {
-			cc.t.Write([]byte(" " + string(cmd)))
+			cc.instance.Terminal.Write([]byte(" " + string(cmd)))
 		}
 	}
-	// cc.t.Write([]byte{'\n'})
 	// NOTE: We need "flush" to pass the test
+	cc.instance.Terminal.Write([]byte{'\n'})
 	// BUG: when <Tab>ed once, all subsequent tabs will not trigger a bell when multiple cands exist, due to non-completed status management
 	//   NOTE: we somehow fixed it by resetting tab status every time when the second tab triggered,
 	//         it conforms to the spec that codecrafters gives, but not consistent to bash,
 	//         which doesn't need double tab when the same prefix is required for completion
 	cc.tabStatus = tabInit
 	// OnChanged really has bizarre behaviour, if enabled (and without this flush, test failed), the output will have a leading prompt, which is not what we want
-	cc.t.Write([]byte("\n$ " + string(line)))
+	cc.instance.Terminal.Write([]byte("$ " + string(line)))
 	return [][]rune{}, 0
+}
+
+func getCompletionMode(line []rune, pos int) (int, []rune) {
+	_, args, endAt, err := parseInput(string(line))
+	if err != nil {
+		// we don't know what will cause the error, so use filename mode for now
+		return completionFilenameMode, []rune{}
+	}
+	// gre xxx yyy
+	if pos <= endAt {
+		return completionCmdMode, line[:pos]
+	}
+	// TODO: we just use the last arg as prefix for now
+	if len(args) == 0 {
+		return completionFilenameMode, []rune{}
+	}
+	return completionFilenameMode, []rune(args[len(args)-1])
 }
 
 func longestCommonPrefix(candidates []string) string {
@@ -343,23 +392,23 @@ func main() {
 	// REPL:
 	// read/eval/print/loop
 	cc := &CommandCompleter{}
-	rl, err := readline.NewEx(&readline.Config{
+	ins, err := readline.NewEx(&readline.Config{
 		Prompt:       "$ ",
 		AutoComplete: cc,
 		Listener:     nil,
 	})
-	cc.t = rl.Terminal
+	cc.instance = ins
 	if err != nil {
 		panic(err)
 	}
-	defer rl.Close()
+	defer ins.Close()
 	for {
-		line, err := rl.Readline()
+		line, err := ins.Readline()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "readline error: %v", err)
 			continue
 		}
-		cmd, args, err := parseInput(line)
+		cmd, args, _, err := parseInput(line)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "parse error: %v", err)
 			continue
