@@ -200,14 +200,12 @@ type CommandCompleter struct {
 //	Do("git", 3) => ["", "-shell"], 3
 func (cc *CommandCompleter) Do(line []rune, pos int) (newline [][]rune, length int) {
 	// fmt.Printf("[do]line: %v, pos: %v, status: %v\n", line, pos, cc.tabStatus)
-	candidates := [][]rune{}
-	rawCandidates := []string{}
+	candidates := []string{}
 	seen := make(map[string]struct{})
 	// NOTE: using Trie might be a good idea to improve the perf, but we don't need it yet.
 	for cmd := range builtinSet {
 		if strings.HasPrefix(cmd, string(line[:pos])) {
-			candidates = append(candidates, append([]rune(cmd[len(line):]), ' '))
-			rawCandidates = append(rawCandidates, cmd)
+			candidates = append(candidates, cmd)
 			seen[cmd] = struct{}{}
 		}
 	}
@@ -218,14 +216,12 @@ func (cc *CommandCompleter) Do(line []rune, pos int) (newline [][]rune, length i
 			continue
 		}
 		if strings.HasPrefix(cmd, string(line[:pos])) {
-			candidates = append(candidates, append([]rune(cmd[len(line):]), ' '))
-			rawCandidates = append(rawCandidates, cmd)
+			candidates = append(candidates, cmd)
 			seen[cmd] = struct{}{}
 		}
 	}
 	// prefix := line[:pos]
 	// fmt.Println("prefix: ", prefix)
-	// fmt.Println("raw: ", rawCandidates)
 	// fmt.Println("seen: ", seen)
 	// fmt.Println("candidates: ", candidates)
 	if len(candidates) == 0 {
@@ -235,8 +231,20 @@ func (cc *CommandCompleter) Do(line []rune, pos int) (newline [][]rune, length i
 	}
 	if len(candidates) == 1 {
 		cc.tabStatus = tabInit
-		return candidates, pos
+		return [][]rune{[]rune(candidates[0][pos:] + " ")}, pos
 	}
+
+	// partial completion
+	commonPrefix := longestCommonPrefix(candidates)
+	if len(commonPrefix) > pos {
+		// gr|
+		// gr|e
+		// gr|ub-mk
+		// gr|ub-me
+		// ....
+		return [][]rune{[]rune(commonPrefix[pos:])}, len(commonPrefix)
+	}
+
 	if cc.tabStatus == tabInit {
 		cc.tabStatus = tabPending
 		cc.t.Bell()
@@ -245,8 +253,8 @@ func (cc *CommandCompleter) Do(line []rune, pos int) (newline [][]rune, length i
 	// else consecutive tabs
 	// NOTE: very bad performance, but we are focusing on the correctness now
 	first := true
-	slices.Sort(rawCandidates)
-	for _, cmd := range rawCandidates {
+	slices.Sort(candidates)
+	for _, cmd := range candidates {
 		if first {
 			cc.t.Write([]byte("\n" + string(cmd)))
 			first = false
@@ -257,9 +265,28 @@ func (cc *CommandCompleter) Do(line []rune, pos int) (newline [][]rune, length i
 	// cc.t.Write([]byte{'\n'})
 	// NOTE: We need "flush" to pass the test
 	// BUG: when <Tab>ed once, all subsequent tabs will not trigger a bell when multiple cands exist, due to non-completed status management
+	//   NOTE: we somehow fixed it by resetting tab status every time when the second tab triggered,
+	//         it conforms to the spec that codecrafters gives, but not consistent to bash,
+	//         which doesn't need double tab when the same prefix is required for completion
+	cc.tabStatus = tabInit
 	// OnChanged really has bizarre behaviour, if enabled (and without this flush, test failed), the output will have a leading prompt, which is not what we want
 	cc.t.Write([]byte("\n$ " + string(line)))
 	return [][]rune{}, 0
+}
+
+func longestCommonPrefix(candidates []string) string {
+	// len >=1 is assured
+	prefix := candidates[0]
+	for _, str := range candidates[1:] {
+		j := 0
+		for ; j < len(prefix) && j < len(str) && str[j] == prefix[j]; j++ {
+		}
+		prefix = prefix[:j]
+		if len(prefix) == 0 {
+			break
+		}
+	}
+	return prefix
 }
 
 func getAllExecutables() []string {
