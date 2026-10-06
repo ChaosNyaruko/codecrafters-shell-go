@@ -218,7 +218,7 @@ func (cc *CommandCompleter) Do(line []rune, pos int) (newline [][]rune, length i
 	if mode == completionCmdMode {
 		for cmd := range builtinSet {
 			if strings.HasPrefix(cmd, string(prefix)) {
-				candidates = append(candidates, cmd)
+				candidates = append(candidates, cmd+" ")
 				seen[cmd] = struct{}{}
 			}
 		}
@@ -229,7 +229,7 @@ func (cc *CommandCompleter) Do(line []rune, pos int) (newline [][]rune, length i
 				continue
 			}
 			if strings.HasPrefix(cmd, string(prefix)) {
-				candidates = append(candidates, cmd)
+				candidates = append(candidates, cmd+" ")
 				seen[cmd] = struct{}{}
 			}
 		}
@@ -247,8 +247,13 @@ func (cc *CommandCompleter) Do(line []rune, pos int) (newline [][]rune, length i
 		for _, ent := range ents {
 			name := ent.Name()
 			if strings.HasPrefix(name, file) {
-				candidates = append(candidates, filepath.Join(dir, name))
-				seen[name] = struct{}{}
+				if ent.IsDir() {
+					dirName := filepath.Join(dir, name) + string(filepath.Separator)
+					// fmt.Printf("dirname: %v\n", dirName)
+					candidates = append(candidates, dirName)
+				} else {
+					candidates = append(candidates, filepath.Join(dir, name)+" ")
+				}
 			}
 		}
 	} else {
@@ -263,7 +268,7 @@ func (cc *CommandCompleter) Do(line []rune, pos int) (newline [][]rune, length i
 	}
 	if len(candidates) == 1 {
 		cc.tabStatus = tabInit
-		return [][]rune{[]rune(candidates[0][len(prefix):] + " ")}, pos
+		return [][]rune{[]rune(candidates[0][len(prefix):])}, pos
 	}
 
 	// partial completion
