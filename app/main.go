@@ -238,14 +238,16 @@ func (cc *CommandCompleter) Do(line []rune, pos int) (newline [][]rune, length i
 		if err != nil {
 			panic(err)
 		}
-		ents, err := os.ReadDir(wd)
+		dir, file := filepath.Split(string(prefix))
+		// fmt.Printf("dir: %v, file: %v\n", dir, file)
+		ents, err := os.ReadDir(filepath.Join(wd, dir))
 		if err != nil {
 			return [][]rune{}, 0
 		}
 		for _, ent := range ents {
 			name := ent.Name()
-			if strings.HasPrefix(name, string(prefix)) {
-				candidates = append(candidates, name)
+			if strings.HasPrefix(name, file) {
+				candidates = append(candidates, filepath.Join(dir, name))
 				seen[name] = struct{}{}
 			}
 		}
@@ -253,7 +255,7 @@ func (cc *CommandCompleter) Do(line []rune, pos int) (newline [][]rune, length i
 		panic(fmt.Sprintf("unreachable completion mode: %v", mode))
 	}
 	// fmt.Printf("[get mode] line: %v, pos: %d, mode: %d, prefix: %q\n", line, pos, mode, prefix)
-	// fmt.Printf("[candidates]: %v", candidates)
+	// fmt.Printf("[candidates]: %v\n", candidates)
 	if len(candidates) == 0 {
 		cc.tabStatus = tabInit
 		cc.instance.Terminal.Bell()
