@@ -214,6 +214,7 @@ func (cc *CommandCompleter) Do(line []rune, pos int) (newline [][]rune, length i
 	seen := make(map[string]struct{})
 	// build candidates
 	// NOTE: using Trie might be a good idea to improve the perf, but we don't need it yet.
+	// prefix is the prefix of "to be completed item", which is gotten by "space(shell semantics)-split", a.k.a parseInput
 	mode, prefix := getCompletionMode(line, pos)
 	if mode == completionCmdMode {
 		for cmd := range builtinSet {
@@ -274,7 +275,7 @@ func (cc *CommandCompleter) Do(line []rune, pos int) (newline [][]rune, length i
 	// partial completion
 	commonPrefix := longestCommonPrefix(candidates)
 	// fmt.Printf("common prefix: %q, pos: %d\n", commonPrefix, pos)
-	if len(commonPrefix) > pos {
+	if len(commonPrefix) > len(prefix) {
 		// gr|
 		// gr|e
 		// gr|ub-mk
