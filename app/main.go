@@ -36,7 +36,9 @@ const (
 )
 
 type JobsManager struct {
-	jobs []*Job
+	jobs     []*Job
+	current  int
+	previous int
 }
 
 func (jm *JobsManager) Start() {
@@ -91,13 +93,15 @@ var builtins = map[string]builtin{
 			return "", nil
 		}
 		js := []string{}
-		for i, job := range jobs.jobs {
-			// for now, we use idx as "recent" judger
-			if i == len(jobs.jobs)-1 {
-				js = append(js, fmt.Sprintf("[%d]+  %-24s%s", job.id, job.status, job.cmd))
-			} else {
-				js = append(js, fmt.Sprintf("[%d]  %-24s%s", job.id, job.status, job.cmd))
+		for _, job := range jobs.jobs {
+			// for now, we use the order of "added time" as the "recent" judger
+			marker := " "
+			if job.id == jobs.current {
+				marker = "+"
+			} else if job.id == jobs.previous {
+				marker = "-"
 			}
+			js = append(js, fmt.Sprintf("[%d]%s  %-24s%s", job.id, marker, job.status, job.cmd))
 		}
 		return strings.Join(js, "\n") + "\n", nil
 	},
@@ -625,6 +629,8 @@ func main() {
 				proc:   proc,
 				status: JobRunning,
 			}
+			jobs.previous = jobs.current
+			jobs.current = j.id
 			jobs.jobs = append(jobs.jobs, j)
 			fmt.Fprintf(stdout, "[%d] %d\n", j.id, j.pid)
 		}
