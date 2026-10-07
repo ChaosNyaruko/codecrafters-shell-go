@@ -263,7 +263,7 @@ func (cc *CommandCompleter) Do(line []rune, pos int) (newline [][]rune, length i
 	// build candidates
 	// NOTE: using Trie might be a good idea to improve the perf, but we don't need it yet.
 	// prefix is the prefix of "to be completed item", which is gotten by "space(shell semantics)-split", a.k.a parseInput
-	mode, prefix, script := getCompletionMode(line, pos)
+	mode, script, cmd, prefix, previous := getCompletionMode(line, pos)
 	switch mode {
 	case completionCmdMode:
 		for cmd := range builtinSet {
@@ -319,7 +319,7 @@ func (cc *CommandCompleter) Do(line []rune, pos int) (newline [][]rune, length i
 			fmt.Fprintf(os.Stderr, "get script abs path err: %v", err)
 			break
 		}
-		scmd := exec.Command(s)
+		scmd := exec.Command(s, []string{cmd, string(prefix), previous}...)
 		buf := bytes.NewBuffer([]byte{})
 		scmd.Stdout = buf
 		if e := scmd.Run(); e != nil {
@@ -389,32 +389,35 @@ func (cc *CommandCompleter) Do(line []rune, pos int) (newline [][]rune, length i
 	return [][]rune{}, 0
 }
 
-// getCompletionMode returns (mode, prefix)
-func getCompletionMode(line []rune, pos int) (int, []rune, string) {
+// getCompletionMode returns (mode, script, cmd/argv[1], prefix/completingargv[2]), previous/argv[3])
+func getCompletionMode(line []rune, pos int) (int, string, string, []rune, string) {
 	cmd, args, endAt, err := parseInput(string(line))
 	if err != nil {
 		// we don't know what will cause the error, so use filename mode for now
-		return completionFilenameMode, []rune{}, ""
+		return completionFilenameMode, "", "", []rune{}, ""
 	}
 	// gre xxx yyy
 	if pos <= endAt {
-		return completionCmdMode, line[:pos], ""
+		return completionCmdMode, "", cmd, line[:pos], ""
 	}
 
-	// TODO: we are not considering context yet
 	// TODO: we just use the last arg as prefix for now
 	if script, ok := compdb.db[cmd]; ok {
-		if len(args) > 0 {
-			return completionProgrammable, []rune(args[len(args)-1]), script.command
+		if len(args) == 0 {
+			return completionProgrammable, script.command, cmd, []rune{}, ""
 		}
-		return completionProgrammable, []rune{}, script.command
+		previous := cmd
+		if len(args) > 1 {
+			previous = args[len(args)-2]
+		}
+		return completionProgrammable, script.command, cmd, []rune(args[len(args)-1]), previous
 	}
 
 	// TODO: we just use the last arg as prefix for now
 	if len(args) == 0 {
-		return completionFilenameMode, []rune{}, ""
+		return completionFilenameMode, "", cmd, []rune{}, ""
 	}
-	return completionFilenameMode, []rune(args[len(args)-1]), ""
+	return completionFilenameMode, "", cmd, []rune(args[len(args)-1]), ""
 }
 
 func longestCommonPrefix(candidates []string) string {
