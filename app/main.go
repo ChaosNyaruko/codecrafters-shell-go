@@ -29,9 +29,31 @@ var builtinSet = map[string]struct{}{
 func init() {
 }
 
+var compdb = &CompleteDB{db: make(map[string]string)}
+
+type CompleteDB struct {
+	// db: cmd -> specification
+	db map[string]string
+}
+
 var builtins = map[string]builtin{
 	"complete": func(args ...string) (string, error) {
-		return "", nil
+		if len(args) == 0 {
+			return "\n", nil
+		}
+		switch args[0] {
+		case "-p":
+			if len(args) < 2 {
+				return "-p recevied a <cmd> as argument", nil
+			}
+			spec, ok := compdb.db[args[1]]
+			if !ok {
+				return fmt.Sprintf("complete: %s: no completion specification\n", args[1]), nil
+			}
+			return spec, nil
+		default:
+			return fmt.Sprintf("unsupported 'complete' flag: %v\n", args[0]), nil
+		}
 	},
 	"cd": func(args ...string) (string, error) {
 		if len(args) == 0 {
