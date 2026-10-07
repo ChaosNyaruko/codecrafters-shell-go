@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/chzyer/readline"
 )
@@ -17,6 +18,41 @@ import (
 var _ = fmt.Print
 
 type builtin func(...string) (string, error)
+
+type Job struct {
+	id     int
+	pid    int
+	cmd    string
+	proc   *exec.Cmd
+	status JobStatus
+}
+
+type JobStatus string
+
+const (
+	JobInit    JobStatus = "TODO"
+	JobDone    JobStatus = "Done"
+	JobStopped JobStatus = "Stopped"
+)
+
+type JobsManager struct {
+	jobs []*Job
+}
+
+func (jm *JobsManager) Start() {
+	t := time.NewTicker(1 * time.Second)
+	defer t.Stop()
+	for range t.C {
+		for _, _ = range jm.jobs {
+
+		}
+	}
+	fmt.Fprintf(os.Stderr, "job manager quits!\n")
+}
+
+var jobs = &JobsManager{
+	jobs: make([]*Job, 0),
+}
 
 var builtinSet = map[string]struct{}{
 	"exit":     {},
@@ -527,6 +563,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "redirect error : %v", err)
 			continue
 		}
+		// NOTE: we don't support background jobs for builtins
 		f, ok := builtins[cmd]
 		if ok {
 			output, err := f(args...)
@@ -540,17 +577,40 @@ func main() {
 			}
 			continue
 		}
+
+		bg := false
+		if len(args) > 0 && args[len(args)-1] == "&" {
+			bg = true
+			args = args[:len(args)-1]
+		}
+
 		proc := exec.Command(cmd, args...)
 		proc.Stdout = stdout
 		proc.Stderr = stderr
 		proc.Stdin = os.Stdin
-		err = proc.Run()
-		if err != nil {
-			if errors.Is(err, exec.ErrNotFound) {
-				fmt.Printf("%s: command not found\n", cmd)
-			} else {
-				// fmt.Fprintf(os.Stderr, "exec %s error: %v\n", cmd, err)
+		if !bg {
+			err = proc.Run()
+			if err != nil {
+				if errors.Is(err, exec.ErrNotFound) {
+					fmt.Printf("%s: command not found\n", cmd)
+				} else {
+					// fmt.Fprintf(os.Stderr, "exec %s error: %v\n", cmd, err)
+				}
 			}
+		} else {
+			err = proc.Start()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "start process %v err: %v\n", cmd, err)
+			}
+			j := &Job{
+				id:     len(jobs.jobs) + 1,
+				pid:    proc.Process.Pid,
+				cmd:    cmd,
+				proc:   proc,
+				status: JobInit,
+			}
+			jobs.jobs = append(jobs.jobs, j)
+			fmt.Fprintf(stdout, "[%d] %d\n", j.id, j.pid)
 		}
 	}
 }
