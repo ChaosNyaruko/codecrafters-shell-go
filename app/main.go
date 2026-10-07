@@ -322,6 +322,7 @@ func (cc *CommandCompleter) Do(line []rune, pos int) (newline [][]rune, length i
 		scmd := exec.Command(s, []string{cmd, string(prefix), previous}...)
 		buf := bytes.NewBuffer([]byte{})
 		scmd.Stdout = buf
+		scmd.Env = append(scmd.Env, fmt.Sprintf("COMP_LINE=%s", string(line)), fmt.Sprintf("COMP_POINT=%d", pos))
 		if e := scmd.Run(); e != nil {
 			fmt.Fprintf(os.Stderr, "completion script %s run failed: %v", s, e)
 			break
