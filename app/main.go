@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -29,11 +30,20 @@ var builtinSet = map[string]struct{}{
 func init() {
 }
 
-var compdb = &CompleteDB{db: make(map[string]string)}
+var compdb = &CompleteDB{db: make(map[string]*CompletionCommand)}
 
 type CompleteDB struct {
 	// db: cmd -> specification
-	db map[string]string
+	db map[string]*CompletionCommand
+}
+
+type CompletionCommand struct {
+	command string
+	name    string
+}
+
+func (cc *CompletionCommand) String() string {
+	return fmt.Sprintf("complete -C '%s' %s", cc.command, cc.name)
 }
 
 var builtins = map[string]builtin{
@@ -50,14 +60,17 @@ var builtins = map[string]builtin{
 			if !ok {
 				return fmt.Sprintf("complete: %s: no completion specification\n", args[1]), nil
 			}
-			return spec + "\n", nil
+			return spec.String() + "\n", nil
 		case "-C": // -C for custom command
 			if len(args) < 3 {
 				return fmt.Sprintf("-C accepts 2 arguments, but got only %d", len(args[0])), nil
 			}
 			command := args[1]
 			name := args[2]
-			compdb.db[name] = fmt.Sprintf("complete -C '%s' %s", command, name)
+			compdb.db[name] = &CompletionCommand{
+				command: command,
+				name:    name,
+			}
 			return "", nil
 		default:
 			return fmt.Sprintf("unsupported 'complete' flag: %v\n", args[0]), nil
@@ -227,6 +240,7 @@ const (
 const (
 	completionCmdMode = iota
 	completionFilenameMode
+	completionProgrammable
 )
 
 type CommandCompleter struct {
@@ -249,8 +263,9 @@ func (cc *CommandCompleter) Do(line []rune, pos int) (newline [][]rune, length i
 	// build candidates
 	// NOTE: using Trie might be a good idea to improve the perf, but we don't need it yet.
 	// prefix is the prefix of "to be completed item", which is gotten by "space(shell semantics)-split", a.k.a parseInput
-	mode, prefix := getCompletionMode(line, pos)
-	if mode == completionCmdMode {
+	mode, prefix, script := getCompletionMode(line, pos)
+	switch mode {
+	case completionCmdMode:
 		for cmd := range builtinSet {
 			if strings.HasPrefix(cmd, string(prefix)) {
 				candidates = append(candidates, cmd+" ")
@@ -268,7 +283,7 @@ func (cc *CommandCompleter) Do(line []rune, pos int) (newline [][]rune, length i
 				seen[cmd] = struct{}{}
 			}
 		}
-	} else if mode == completionFilenameMode {
+	case completionFilenameMode:
 		wd, err := os.Getwd()
 		if err != nil {
 			panic(err)
@@ -291,7 +306,33 @@ func (cc *CommandCompleter) Do(line []rune, pos int) (newline [][]rune, length i
 				}
 			}
 		}
-	} else {
+	case completionProgrammable:
+		wd, err := os.Getwd()
+		if err != nil {
+			panic(err)
+		}
+		s := script
+		if !filepath.IsAbs(s) {
+			s, err = filepath.Abs(filepath.Join(wd, script))
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "get script abs path err: %v", err)
+			break
+		}
+		scmd := exec.Command(s)
+		buf := bytes.NewBuffer([]byte{})
+		scmd.Stdout = buf
+		if e := scmd.Run(); e != nil {
+			fmt.Fprintf(os.Stderr, "completion script %s run failed: %v", s, e)
+			break
+		}
+		// fmt.Fprintf(os.Stderr, "%q\n", buf.String())
+		for item := range strings.SplitSeq(buf.String(), "\n") {
+			if item != "" {
+				candidates = append(candidates, item+" ")
+			}
+		}
+	default:
 		panic(fmt.Sprintf("unreachable completion mode: %v", mode))
 	}
 	// fmt.Printf("[get mode] line: %v, pos: %d, mode: %d, prefix: %q\n", line, pos, mode, prefix)
@@ -348,21 +389,32 @@ func (cc *CommandCompleter) Do(line []rune, pos int) (newline [][]rune, length i
 	return [][]rune{}, 0
 }
 
-func getCompletionMode(line []rune, pos int) (int, []rune) {
-	_, args, endAt, err := parseInput(string(line))
+// getCompletionMode returns (mode, prefix)
+func getCompletionMode(line []rune, pos int) (int, []rune, string) {
+	cmd, args, endAt, err := parseInput(string(line))
 	if err != nil {
 		// we don't know what will cause the error, so use filename mode for now
-		return completionFilenameMode, []rune{}
+		return completionFilenameMode, []rune{}, ""
 	}
 	// gre xxx yyy
 	if pos <= endAt {
-		return completionCmdMode, line[:pos]
+		return completionCmdMode, line[:pos], ""
 	}
+
+	// TODO: we are not considering context yet
+	// TODO: we just use the last arg as prefix for now
+	if script, ok := compdb.db[cmd]; ok {
+		if len(args) > 0 {
+			return completionProgrammable, []rune(args[len(args)-1]), script.command
+		}
+		return completionProgrammable, []rune{}, script.command
+	}
+
 	// TODO: we just use the last arg as prefix for now
 	if len(args) == 0 {
-		return completionFilenameMode, []rune{}
+		return completionFilenameMode, []rune{}, ""
 	}
-	return completionFilenameMode, []rune(args[len(args)-1])
+	return completionFilenameMode, []rune(args[len(args)-1]), ""
 }
 
 func longestCommonPrefix(candidates []string) string {
@@ -435,6 +487,7 @@ func main() {
 	// read/eval/print/loop
 	cc := &CommandCompleter{}
 	ins, err := readline.NewEx(&readline.Config{
+		// shebang
 		Prompt:       "$ ",
 		AutoComplete: cc,
 		Listener:     nil,
