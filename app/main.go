@@ -52,6 +52,12 @@ var builtins = map[string]builtin{
 			return "\n", nil
 		}
 		switch args[0] {
+		case "-r": // -r for reset/removal/unregister
+			if len(args) < 2 {
+				return "-r recevied a <cmd> as argument", nil
+			}
+			delete(compdb.db, args[1])
+			return "", nil
 		case "-p": // -p for print
 			if len(args) < 2 {
 				return "-p recevied a <cmd> as argument", nil
