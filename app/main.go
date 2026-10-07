@@ -25,6 +25,7 @@ var builtinSet = map[string]struct{}{
 	"pwd":      {},
 	"cd":       {},
 	"complete": {},
+	"jobs":     {},
 }
 
 func init() {
@@ -47,6 +48,9 @@ func (cc *CompletionCommand) String() string {
 }
 
 var builtins = map[string]builtin{
+	"jobs": func(args ...string) (string, error) {
+		return "", nil
+	},
 	"complete": func(args ...string) (string, error) {
 		if len(args) == 0 {
 			return "\n", nil
