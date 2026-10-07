@@ -42,7 +42,7 @@ var builtins = map[string]builtin{
 			return "\n", nil
 		}
 		switch args[0] {
-		case "-p":
+		case "-p": // -p for print
 			if len(args) < 2 {
 				return "-p recevied a <cmd> as argument", nil
 			}
@@ -50,7 +50,15 @@ var builtins = map[string]builtin{
 			if !ok {
 				return fmt.Sprintf("complete: %s: no completion specification\n", args[1]), nil
 			}
-			return spec, nil
+			return spec + "\n", nil
+		case "-C": // -C for custom command
+			if len(args) < 3 {
+				return fmt.Sprintf("-C accepts 2 arguments, but got only %d", len(args[0])), nil
+			}
+			command := args[1]
+			name := args[2]
+			compdb.db[name] = fmt.Sprintf("complete -C '%s' %s", command, name)
+			return "", nil
 		default:
 			return fmt.Sprintf("unsupported 'complete' flag: %v\n", args[0]), nil
 		}
@@ -458,7 +466,10 @@ func main() {
 			if err != nil {
 				// fmt.Fprintf(stderr, "execute %v error: %v", cmd, err)
 			} else {
-				fmt.Fprintf(stdout, "%s", output)
+				_, err := fmt.Fprintf(stdout, "%s", output)
+				if err != nil {
+					panic(err)
+				}
 			}
 			continue
 		}
