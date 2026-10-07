@@ -30,7 +30,7 @@ type Job struct {
 type JobStatus string
 
 const (
-	JobInit    JobStatus = "TODO"
+	JobRunning JobStatus = "Running"
 	JobDone    JobStatus = "Done"
 	JobStopped JobStatus = "Stopped"
 )
@@ -43,8 +43,10 @@ func (jm *JobsManager) Start() {
 	t := time.NewTicker(1 * time.Second)
 	defer t.Stop()
 	for range t.C {
-		for _, _ = range jm.jobs {
-
+		for _, job := range jm.jobs {
+			if job.proc.ProcessState.Exited() {
+				job.status = JobStopped
+			}
 		}
 	}
 	fmt.Fprintf(os.Stderr, "job manager quits!\n")
@@ -85,7 +87,19 @@ func (cc *CompletionCommand) String() string {
 
 var builtins = map[string]builtin{
 	"jobs": func(args ...string) (string, error) {
-		return "", nil
+		if len(jobs.jobs) == 0 {
+			return "", nil
+		}
+		js := []string{}
+		for i, job := range jobs.jobs {
+			// for now, we use idx as "recent" judger
+			if i == len(jobs.jobs)-1 {
+				js = append(js, fmt.Sprintf("[%d]+  %-24s%s", job.id, job.status, job.cmd))
+			} else {
+				js = append(js, fmt.Sprintf("[%d]  %-24s%s", job.id, job.status, job.cmd))
+			}
+		}
+		return strings.Join(js, "\n") + "\n", nil
 	},
 	"complete": func(args ...string) (string, error) {
 		if len(args) == 0 {
@@ -602,12 +616,14 @@ func main() {
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "start process %v err: %v\n", cmd, err)
 			}
+			jname := append([]string{cmd}, args...)
+			jname = append(jname, "&")
 			j := &Job{
 				id:     len(jobs.jobs) + 1,
 				pid:    proc.Process.Pid,
-				cmd:    cmd,
+				cmd:    strings.Join(jname, " "),
 				proc:   proc,
-				status: JobInit,
+				status: JobRunning,
 			}
 			jobs.jobs = append(jobs.jobs, j)
 			fmt.Fprintf(stdout, "[%d] %d\n", j.id, j.pid)
