@@ -18,17 +18,21 @@ var _ = fmt.Print
 type builtin func(...string) (string, error)
 
 var builtinSet = map[string]struct{}{
-	"exit": {},
-	"echo": {},
-	"type": {},
-	"pwd":  {},
-	"cd":   {},
+	"exit":     {},
+	"echo":     {},
+	"type":     {},
+	"pwd":      {},
+	"cd":       {},
+	"complete": {},
 }
 
 func init() {
 }
 
 var builtins = map[string]builtin{
+	"complete": func(args ...string) (string, error) {
+		return "", nil
+	},
 	"cd": func(args ...string) (string, error) {
 		if len(args) == 0 {
 			return "\n", nil
