@@ -43,35 +43,6 @@ type JobsManager struct {
 	cnt      int
 }
 
-func (jm *JobsManager) poll() {
-	allDone := true
-	for _, job := range jm.jobs {
-		if job.status != JobDone {
-			allDone = false
-		}
-	}
-	// we should see "DONE" at least once, for the test, we see **only** once
-	if allDone {
-		if jm.cnt > 0 {
-			jm.jobs = make([]*Job, 0)
-			jm.current = 0
-			jm.previous = 0
-			jm.cnt = 0
-		} else {
-			jm.cnt += 1
-		}
-	}
-}
-
-func (jm *JobsManager) Start() {
-	t := time.NewTicker(1 * time.Second)
-	defer t.Stop()
-	for range t.C {
-		jm.poll()
-	}
-	fmt.Fprintf(os.Stderr, "job manager quits!\n")
-}
-
 var jobs = &JobsManager{
 	jobs: make([]*Job, 0),
 }
@@ -601,7 +572,6 @@ func main() {
 		panic(err)
 	}
 	defer ins.Close()
-	go jobs.Start()
 	for {
 		line, err := ins.Readline()
 		if err != nil {
@@ -684,7 +654,6 @@ func main() {
 			}()
 
 			fmt.Fprintf(stdout, "[%d] %d\n", j.id, j.pid)
-			jobs.poll()
 		}
 	}
 }
