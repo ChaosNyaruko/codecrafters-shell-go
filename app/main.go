@@ -38,6 +38,35 @@ type JobsManager struct {
 	jobs []*Job
 }
 
+func (jm *JobsManager) reap(printDoneOnly bool) string {
+	js := []string{}
+	newJobs := []*Job{}
+	for i, job := range jobs.jobs {
+		// for now, we use the order of "added time" as the "recent" judger
+		marker := " "
+		if i == len(jobs.jobs)-1 {
+			marker = "+"
+		} else if i == len(jobs.jobs)-2 {
+			marker = "-"
+		}
+		cmd := job.cmd
+		if job.status == JobDone {
+			// cmd arg1 arg2 &
+			cmd = strings.TrimRight(cmd, " &")
+		} else {
+			newJobs = append(newJobs, job)
+		}
+		if printDoneOnly && job.status == JobDone || !printDoneOnly {
+			js = append(js, fmt.Sprintf("[%d]%s  %-24s%s", job.id, marker, job.status, cmd))
+		}
+	}
+	jobs.jobs = newJobs
+	if len(js) == 0 {
+		return ""
+	}
+	return strings.Join(js, "\n") + "\n"
+}
+
 var jobs = &JobsManager{
 	jobs: make([]*Job, 0),
 }
@@ -73,30 +102,8 @@ func (cc *CompletionCommand) String() string {
 
 var builtins = map[string]builtin{
 	"jobs": func(args ...string) (string, error) {
-		js := []string{}
-		newJobs := []*Job{}
-		for i, job := range jobs.jobs {
-			// for now, we use the order of "added time" as the "recent" judger
-			marker := " "
-			if i == len(jobs.jobs)-1 {
-				marker = "+"
-			} else if i == len(jobs.jobs)-2 {
-				marker = "-"
-			}
-			cmd := job.cmd
-			if job.status == JobDone {
-				// cmd arg1 arg2 &
-				cmd = strings.TrimRight(cmd, " &")
-			} else {
-				newJobs = append(newJobs, job)
-			}
-			js = append(js, fmt.Sprintf("[%d]%s  %-24s%s", job.id, marker, job.status, cmd))
-		}
-		jobs.jobs = newJobs
-		if len(js) == 0 {
-			return "", nil
-		}
-		return strings.Join(js, "\n") + "\n", nil
+		output := jobs.reap(false)
+		return output, nil
 	},
 	"complete": func(args ...string) (string, error) {
 		if len(args) == 0 {
@@ -596,6 +603,7 @@ func main() {
 				}
 			}
 			closeRedirectedOutput(stdout, stderr)
+			fmt.Fprintf(os.Stdout, "%s", jobs.reap(true))
 			continue
 		}
 
@@ -618,6 +626,7 @@ func main() {
 					// fmt.Fprintf(os.Stderr, "exec %s error: %v\n", cmd, err)
 				}
 			}
+			fmt.Fprintf(os.Stdout, "%s", jobs.reap(true))
 			closeRedirectedOutput(stdout, stderr)
 		} else {
 			err = proc.Start()
@@ -647,6 +656,7 @@ func main() {
 			}()
 
 			fmt.Fprintf(stdout, "[%d] %d\n", j.id, j.pid)
+			fmt.Fprintf(os.Stdout, "%s", jobs.reap(true))
 		}
 	}
 }
