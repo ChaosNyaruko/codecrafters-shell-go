@@ -19,12 +19,11 @@ var _ = fmt.Print
 type builtin func(...string) (string, error)
 
 type Job struct {
-	id         int
-	pid        int
-	cmd        string
-	proc       *exec.Cmd
-	status     JobStatus
-	donePolled bool
+	id     int
+	pid    int
+	cmd    string
+	proc   *exec.Cmd
+	status JobStatus
 }
 
 type JobStatus string
@@ -36,10 +35,7 @@ const (
 )
 
 type JobsManager struct {
-	jobs     []*Job
-	current  int
-	previous int
-	cnt      int
+	jobs []*Job
 }
 
 var jobs = &JobsManager{
@@ -78,25 +74,25 @@ func (cc *CompletionCommand) String() string {
 var builtins = map[string]builtin{
 	"jobs": func(args ...string) (string, error) {
 		js := []string{}
+		newJobs := []*Job{}
 		for _, job := range jobs.jobs {
-			if job.donePolled {
-				continue
-			}
 			// for now, we use the order of "added time" as the "recent" judger
 			marker := " "
-			if job.id == jobs.current {
+			if job.id == len(jobs.jobs) {
 				marker = "+"
-			} else if job.id == jobs.previous {
+			} else if job.id == len(jobs.jobs)-1 {
 				marker = "-"
 			}
 			cmd := job.cmd
 			if job.status == JobDone {
 				// cmd arg1 arg2 &
 				cmd = strings.TrimRight(cmd, " &")
-				job.donePolled = true
+			} else {
+				newJobs = append(newJobs, job)
 			}
 			js = append(js, fmt.Sprintf("[%d]%s  %-24s%s", job.id, marker, job.status, cmd))
 		}
+		jobs.jobs = newJobs
 		if len(js) == 0 {
 			return "", nil
 		}
@@ -637,8 +633,6 @@ func main() {
 				proc:   proc,
 				status: JobRunning,
 			}
-			jobs.previous = jobs.current
-			jobs.current = j.id
 			jobs.jobs = append(jobs.jobs, j)
 			go func() {
 				err := j.proc.Wait()
