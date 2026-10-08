@@ -20,11 +20,12 @@ var _ = fmt.Print
 type builtin func(...string) (string, error)
 
 type Job struct {
-	id     int
-	pid    int
-	cmd    string
-	proc   *exec.Cmd
-	status JobStatus
+	id         int
+	pid        int
+	cmd        string
+	proc       *exec.Cmd
+	status     JobStatus
+	donePolled bool
 }
 
 type JobStatus string
@@ -39,17 +40,34 @@ type JobsManager struct {
 	jobs     []*Job
 	current  int
 	previous int
+	cnt      int
+}
+
+func (jm *JobsManager) poll() {
+	allDone := true
+	for _, job := range jm.jobs {
+		if job.status != JobDone {
+			allDone = false
+		}
+	}
+	// we should see "DONE" at least once, for the test, we see **only** once
+	if allDone {
+		if jm.cnt > 0 {
+			jm.jobs = make([]*Job, 0)
+			jm.current = 0
+			jm.previous = 0
+			jm.cnt = 0
+		} else {
+			jm.cnt += 1
+		}
+	}
 }
 
 func (jm *JobsManager) Start() {
 	t := time.NewTicker(1 * time.Second)
 	defer t.Stop()
 	for range t.C {
-		for _, job := range jm.jobs {
-			if job.proc.ProcessState.Exited() {
-				job.status = JobStopped
-			}
-		}
+		jm.poll()
 	}
 	fmt.Fprintf(os.Stderr, "job manager quits!\n")
 }
@@ -89,11 +107,11 @@ func (cc *CompletionCommand) String() string {
 
 var builtins = map[string]builtin{
 	"jobs": func(args ...string) (string, error) {
-		if len(jobs.jobs) == 0 {
-			return "", nil
-		}
 		js := []string{}
 		for _, job := range jobs.jobs {
+			if job.donePolled {
+				continue
+			}
 			// for now, we use the order of "added time" as the "recent" judger
 			marker := " "
 			if job.id == jobs.current {
@@ -101,7 +119,16 @@ var builtins = map[string]builtin{
 			} else if job.id == jobs.previous {
 				marker = "-"
 			}
-			js = append(js, fmt.Sprintf("[%d]%s  %-24s%s", job.id, marker, job.status, job.cmd))
+			cmd := job.cmd
+			if job.status == JobDone {
+				// cmd arg1 arg2 &
+				cmd = strings.TrimRight(cmd, " &")
+				job.donePolled = true
+			}
+			js = append(js, fmt.Sprintf("[%d]%s  %-24s%s", job.id, marker, job.status, cmd))
+		}
+		if len(js) == 0 {
+			return "", nil
 		}
 		return strings.Join(js, "\n") + "\n", nil
 	},
@@ -175,9 +202,18 @@ var builtins = map[string]builtin{
 	"echo": func(args ...string) (string, error) {
 		lf := "\n"
 		echoFrom := 0
-		if len(args) >= 1 && args[0] == "-n" {
-			lf = ""
-			echoFrom += 1
+		for _, arg := range args {
+			if strings.HasPrefix(arg, "-") {
+				echoFrom += 1
+				options := strings.TrimPrefix(arg, "-")
+				// BUG: the readline lib doesn't print the echoed text with "-n" if not redirect (i.e. use terminal as stdout)
+				// we should implement our "trailing management and SetPrompt" at proper place
+				if strings.Contains(options, "n") {
+					lf = ""
+				}
+			} else {
+				break
+			}
 		}
 		return fmt.Sprintf("%s%s", strings.Join(args[echoFrom:], " "), lf), nil
 	},
@@ -565,6 +601,7 @@ func main() {
 		panic(err)
 	}
 	defer ins.Close()
+	go jobs.Start()
 	for {
 		line, err := ins.Readline()
 		if err != nil {
@@ -593,6 +630,7 @@ func main() {
 					panic(err)
 				}
 			}
+			closeRedirectedOutput(stdout, stderr)
 			continue
 		}
 
@@ -615,6 +653,7 @@ func main() {
 					// fmt.Fprintf(os.Stderr, "exec %s error: %v\n", cmd, err)
 				}
 			}
+			closeRedirectedOutput(stdout, stderr)
 		} else {
 			err = proc.Start()
 			if err != nil {
@@ -632,7 +671,33 @@ func main() {
 			jobs.previous = jobs.current
 			jobs.current = j.id
 			jobs.jobs = append(jobs.jobs, j)
+			go func() {
+				err := j.proc.Wait()
+				if err != nil {
+					fmt.Fprintf(os.Stdout, "proc execute err: %v\n", err)
+				}
+				// NOTE: potential bug, maybe the done channel is the way to assure memory model and make the j.status change
+				// seen by jm.poll()
+				// see this https://blog.freecloud.dev/posts/2021-11-04-gohappensbefore/
+				j.status = JobDone
+				closeRedirectedOutput(stdout, stderr)
+			}()
+
 			fmt.Fprintf(stdout, "[%d] %d\n", j.id, j.pid)
+			jobs.poll()
+		}
+	}
+}
+
+func closeRedirectedOutput(stdout *os.File, stderr *os.File) {
+	if stdout != os.Stdout {
+		if err := stdout.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "close redirected stdout err: %v\n", err)
+		}
+	}
+	if stderr != os.Stderr {
+		if err := stderr.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "close redirected stderr err: %v\n", err)
 		}
 	}
 }
@@ -652,7 +717,7 @@ func getRedirectIfPossible(args []string) ([]string, *os.File, *os.File, error) 
 		// right side takes higher precedence
 		if (outfd == os.Stdout) && (args[i-2] == ">" || args[i-2] == "1>") {
 			fname := args[i-1]
-			outfd, err = os.Create(fname)
+			outfd, err = os.OpenFile(fname, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o666)
 			if err != nil {
 				return args, os.Stdout, os.Stderr, err
 			}
@@ -673,7 +738,7 @@ func getRedirectIfPossible(args []string) ([]string, *os.File, *os.File, error) 
 			argsEnd -= 2
 		} else if (errfd == os.Stderr) && args[i-2] == "2>" {
 			fname := args[i-1]
-			errfd, err = os.Create(fname)
+			errfd, err = os.OpenFile(fname, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o666)
 			if err != nil {
 				return args, os.Stdout, os.Stderr, err
 			}
