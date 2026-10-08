@@ -75,12 +75,12 @@ var builtins = map[string]builtin{
 	"jobs": func(args ...string) (string, error) {
 		js := []string{}
 		newJobs := []*Job{}
-		for _, job := range jobs.jobs {
+		for i, job := range jobs.jobs {
 			// for now, we use the order of "added time" as the "recent" judger
 			marker := " "
-			if job.id == len(jobs.jobs) {
+			if i == len(jobs.jobs)-1 {
 				marker = "+"
-			} else if job.id == len(jobs.jobs)-1 {
+			} else if i == len(jobs.jobs)-2 {
 				marker = "-"
 			}
 			cmd := job.cmd
