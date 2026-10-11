@@ -653,7 +653,7 @@ func main() {
 			}
 
 			// see the followin if you are interested in the kernel details
-			// CSAPP
+			// CSAPP: 深入理解计算机系统
 			// man pipe
 			// man dup2
 			// TODO: i vaguely remember we should "Close" the pipe writer in the parent shell,
@@ -676,6 +676,10 @@ func main() {
 			f, ok := builtins[cmd]
 			// NOTE: we don't support background jobs for builtins
 			if ok {
+				// builtins don't read stdin; release pr so writers get SIGPIPE.
+				if stdin != os.Stdin {
+					stdin.Close()
+				}
 				wg.Go(
 					func() {
 						output, err := f(args...)
@@ -684,7 +688,7 @@ func main() {
 						} else {
 							_, err := fmt.Fprintf(stdout, "%s", output)
 							if err != nil {
-								panic(err)
+								fmt.Fprintf(os.Stderr, "builtin exec: err: %v\n", err)
 							}
 						}
 						closeRedirectedOutput(stdout, stderr)
@@ -697,6 +701,15 @@ func main() {
 				proc.Stdin = stdin
 
 				err := proc.Start()
+				if stdin != os.Stdin {
+					stdin.Close()
+				}
+				if stdout != os.Stdout {
+					stdout.Close()
+				}
+				if stderr != os.Stderr {
+					stderr.Close()
+				}
 				if err != nil {
 					if errors.Is(err, exec.ErrNotFound) {
 						fmt.Fprintf(os.Stderr, "%s: command not found\n", cmd)
@@ -735,11 +748,11 @@ func main() {
 					if j != nil {
 						j.status = JobDone
 					}
-					closeRedirectedOutput(stdout, stderr)
+					// closeRedirectedOutput(stdout, stderr)
 				}(j)
 
 				if j != nil {
-					fmt.Fprintf(stdout, "[%d] %d\n", j.id, j.pid)
+					fmt.Fprintf(os.Stdout, "[%d] %d\n", j.id, j.pid)
 				}
 				fmt.Fprintf(os.Stdout, "%s", jobs.reap(true))
 			}
