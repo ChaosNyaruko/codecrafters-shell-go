@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/chzyer/readline"
 )
@@ -227,9 +228,26 @@ var quotedEscapes = map[rune]rune{
 	'$':  '?', // TODO: we don't support env vars
 }
 
-func parseInput(line string) (string, []string, int, error) {
+type Input struct {
+	cmd      string
+	args     []string
+	cmdEndAt int // for completion purpose
+}
+
+type Task struct {
+	input  Input
+	cmd    string // we don't modify the args slice in the input, for clarity
+	args   []string
+	stdout *os.File
+	stderr *os.File
+	stdin  *os.File
+	bg     bool
+}
+
+func parseInput(line string) ([]Input, error) {
 	status := normal
 	cmdEndAt := len(line)
+	res := make([]Input, 0, 2)
 	beStatus := normal // before escaping status
 	inputs := make([]string, 0, 2)
 	var cur string
@@ -271,6 +289,23 @@ func parseInput(line string) (string, []string, int, error) {
 				}
 			} else if c == '\\' {
 				status = escaping
+			} else if c == '|' {
+				if cur != "" {
+					if len(inputs) == 0 {
+						// NOTE: might have bug in non-ASCII unicodes
+						cmdEndAt = i
+					}
+					inputs = append(inputs, cur)
+					cur = ""
+				}
+				if len(inputs) != 0 {
+					res = append(res, Input{
+						cmd:      inputs[0],
+						args:     inputs[1:],
+						cmdEndAt: i,
+					})
+					inputs = []string{}
+				}
 			} else {
 				cur += string(c)
 			}
@@ -293,16 +328,19 @@ func parseInput(line string) (string, []string, int, error) {
 	}
 
 	if status != normal {
-		return "", nil, cmdEndAt, fmt.Errorf("bad status: %v", status)
+		return nil, fmt.Errorf("bad status: %v", status)
 	}
 
 	if cur != "" {
 		inputs = append(inputs, cur)
 	}
-	cmd := inputs[0]
-	args := inputs[1:]
+	res = append(res, Input{
+		cmd:      inputs[0],
+		args:     inputs[1:],
+		cmdEndAt: cmdEndAt,
+	})
 	// fmt.Fprintf(os.Stderr, "parse inputs: cmd: %s, args: %#v\n", cmd, args)
-	return cmd, args, cmdEndAt, nil
+	return res, nil
 }
 
 const (
@@ -465,11 +503,14 @@ func (cc *CommandCompleter) Do(line []rune, pos int) (newline [][]rune, length i
 
 // getCompletionMode returns (mode, script, cmd/argv[1], prefix/completingargv[2]), previous/argv[3])
 func getCompletionMode(line []rune, pos int) (int, string, string, []rune, string) {
-	cmd, args, endAt, err := parseInput(string(line))
+	inputs, err := parseInput(string(line))
+	// TODO: we only support the last cmd (but pos should consider the cmd position in piped cmds)
 	if err != nil {
 		// we don't know what will cause the error, so use filename mode for now
 		return completionFilenameMode, "", "", []rune{}, ""
 	}
+	input := inputs[len(inputs)-1]
+	cmd, args, endAt := input.cmd, input.args, input.cmdEndAt
 	// gre xxx yyy
 	if pos <= endAt {
 		return completionCmdMode, "", cmd, line[:pos], ""
@@ -580,84 +621,130 @@ func main() {
 			fmt.Fprintf(os.Stderr, "readline error: %v", err)
 			continue
 		}
-		cmd, args, _, err := parseInput(line)
+		inputs, err := parseInput(line)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "parse error: %v", err)
 			continue
 		}
-		args, stdout, stderr, err := getRedirectIfPossible(args)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "redirect error : %v", err)
-			continue
-		}
-		// NOTE: we don't support background jobs for builtins
-		f, ok := builtins[cmd]
-		if ok {
-			output, err := f(args...)
+
+		tasks := []*Task{}
+		for _, input := range inputs {
+			cmd := input.cmd
+			args := input.args
+			args, stdout, stderr, err := getRedirectIfPossible(args)
 			if err != nil {
-				// fmt.Fprintf(stderr, "execute %v error: %v", cmd, err)
+				fmt.Fprintf(os.Stderr, "redirect error : %v", err)
+				continue
+			}
+			bg := false
+			if len(args) > 0 && args[len(args)-1] == "&" {
+				bg = true
+				args = args[:len(args)-1]
+			}
+
+			task := &Task{
+				input:  input,
+				cmd:    cmd,
+				args:   args,
+				stdout: stdout,
+				stderr: stderr,
+				stdin:  os.Stdin,
+				bg:     bg,
+			}
+
+			// see the followin if you are interested in the kernel details
+			// CSAPP
+			// man pipe
+			// man dup2
+			// TODO: i vaguely remember we should "Close" the pipe writer in the parent shell,
+			// so that when the piped stdout finish writing, the piped stdin process can read EOF correctly?
+			if len(tasks) > 0 && tasks[len(tasks)-1].stdout == os.Stdout {
+				pr, pw, err := os.Pipe()
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "open pipe err: %v\n", err)
+					continue
+				}
+				tasks[len(tasks)-1].stdout = pw
+				task.stdin = pr
+			}
+			tasks = append(tasks, task)
+		}
+
+		wg := &sync.WaitGroup{}
+		for _, task := range tasks {
+			cmd, args, bg, stdout, stderr, stdin := task.cmd, task.args, task.bg, task.stdout, task.stderr, task.stdin
+			f, ok := builtins[cmd]
+			// NOTE: we don't support background jobs for builtins
+			if ok {
+				wg.Go(
+					func() {
+						output, err := f(args...)
+						if err != nil {
+							// fmt.Fprintf(stderr, "execute %v error: %v", cmd, err)
+						} else {
+							_, err := fmt.Fprintf(stdout, "%s", output)
+							if err != nil {
+								panic(err)
+							}
+						}
+						closeRedirectedOutput(stdout, stderr)
+						fmt.Fprintf(os.Stdout, "%s", jobs.reap(true))
+					})
 			} else {
-				_, err := fmt.Fprintf(stdout, "%s", output)
+				proc := exec.Command(cmd, args...)
+				proc.Stdout = stdout
+				proc.Stderr = stderr
+				proc.Stdin = stdin
+
+				err := proc.Start()
 				if err != nil {
-					panic(err)
+					if errors.Is(err, exec.ErrNotFound) {
+						fmt.Fprintf(os.Stderr, "%s: command not found\n", cmd)
+					} else {
+						fmt.Fprintf(os.Stderr, "start process exec %s error: %v\n", cmd, err)
+					}
+					continue
 				}
-			}
-			closeRedirectedOutput(stdout, stderr)
-			fmt.Fprintf(os.Stdout, "%s", jobs.reap(true))
-			continue
-		}
-
-		bg := false
-		if len(args) > 0 && args[len(args)-1] == "&" {
-			bg = true
-			args = args[:len(args)-1]
-		}
-
-		proc := exec.Command(cmd, args...)
-		proc.Stdout = stdout
-		proc.Stderr = stderr
-		proc.Stdin = os.Stdin
-		if !bg {
-			err = proc.Run()
-			if err != nil {
-				if errors.Is(err, exec.ErrNotFound) {
-					fmt.Printf("%s: command not found\n", cmd)
-				} else {
-					// fmt.Fprintf(os.Stderr, "exec %s error: %v\n", cmd, err)
+				var j *Job = nil
+				if bg {
+					jname := append([]string{cmd}, args...)
+					jname = append(jname, "&")
+					j = &Job{
+						id:     len(jobs.jobs) + 1,
+						pid:    proc.Process.Pid,
+						cmd:    strings.Join(jname, " "),
+						proc:   proc,
+						status: JobRunning,
+					}
+					jobs.jobs = append(jobs.jobs, j)
 				}
-			}
-			fmt.Fprintf(os.Stdout, "%s", jobs.reap(true))
-			closeRedirectedOutput(stdout, stderr)
-		} else {
-			err = proc.Start()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "start process %v err: %v\n", cmd, err)
-			}
-			jname := append([]string{cmd}, args...)
-			jname = append(jname, "&")
-			j := &Job{
-				id:     len(jobs.jobs) + 1,
-				pid:    proc.Process.Pid,
-				cmd:    strings.Join(jname, " "),
-				proc:   proc,
-				status: JobRunning,
-			}
-			jobs.jobs = append(jobs.jobs, j)
-			go func() {
-				err := j.proc.Wait()
-				if err != nil {
-					fmt.Fprintf(os.Stdout, "proc execute err: %v\n", err)
+				if !bg {
+					wg.Add(1)
 				}
-				// NOTE: potential bug, maybe the done channel is the way to assure memory model and make the j.status change
-				// seen by jm.poll()
-				// see this https://blog.freecloud.dev/posts/2021-11-04-gohappensbefore/
-				j.status = JobDone
-				closeRedirectedOutput(stdout, stderr)
-			}()
+				go func(j *Job) {
+					if !bg {
+						defer wg.Done()
+					}
+					err := proc.Wait()
+					if err != nil {
+						// fmt.Fprintf(os.Stdout, "proc execute err: %v\n", err)
+					}
+					// NOTE: potential bug, maybe the done channel is the way to assure memory model and make the j.status change
+					// seen by jm.poll()
+					// see this https://blog.freecloud.dev/posts/2021-11-04-gohappensbefore/
+					if j != nil {
+						j.status = JobDone
+					}
+					closeRedirectedOutput(stdout, stderr)
+				}(j)
 
-			fmt.Fprintf(stdout, "[%d] %d\n", j.id, j.pid)
-			fmt.Fprintf(os.Stdout, "%s", jobs.reap(true))
+				if j != nil {
+					fmt.Fprintf(stdout, "[%d] %d\n", j.id, j.pid)
+				}
+				fmt.Fprintf(os.Stdout, "%s", jobs.reap(true))
+			}
 		}
+		wg.Wait()
 	}
 }
 
