@@ -107,6 +107,18 @@ func init() {
 					}
 					history = slices.Concat(history[len(history)-1:], his)
 					return "", nil
+				} else if args[0] == "-w" && len(args) > 1 {
+					// write history from a file
+					fname := args[1]
+					hf, e := os.OpenFile(fname, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o666)
+					if e != nil {
+						return "", e
+					}
+					defer hf.Close()
+					for _, r := range history {
+						fmt.Fprintf(hf, "%s\n", r.cmd)
+					}
+					return "", nil
 				}
 				n, err = strconv.Atoi(args[0])
 				if err != nil {
