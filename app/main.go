@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -82,8 +83,18 @@ type record struct {
 func init() {
 	builtins = map[string]builtin{
 		"history": func(args ...string) (string, error) {
+			n := len(history)
+			all := len(history)
+			var err error
+			if len(args) > 0 {
+				n, err = strconv.Atoi(args[0])
+				if err != nil {
+					return "", fmt.Errorf("numeric argument required")
+				}
+			}
 			rs := []string{}
-			for _, r := range history {
+			// 10  n=4 [6,10)
+			for _, r := range history[all-n:] {
 				rs = append(rs, fmt.Sprintf("%4d  %s", r.id, r.cmd))
 			}
 			return strings.Join(rs, "\n") + "\n", nil
@@ -694,12 +705,12 @@ func main() {
 					func() {
 						output, err := f(args...)
 						if err != nil {
-							// fmt.Fprintf(stderr, "execute %v error: %v", cmd, err)
+							fmt.Fprintf(stderr, "%v error: %v\n", cmd, err)
 						} else {
-							_, err := fmt.Fprintf(stdout, "%s", output)
-							if err != nil {
-								fmt.Fprintf(os.Stderr, "builtin exec: err: %v\n", err)
-							}
+							_, _ = fmt.Fprintf(stdout, "%s", output)
+							// if err != nil {
+							// 	fmt.Fprintf(os.Stderr, "builtin exec: err: %v\n", err)
+							// }
 						}
 						closeRedirectedOutput(stdout, stderr)
 						fmt.Fprintf(os.Stdout, "%s", jobs.reap(true))
