@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode"
 
 	"github.com/chzyer/readline"
 )
@@ -147,6 +148,21 @@ type record struct {
 
 var globalVars map[string]string
 
+func validateID(id string) bool {
+	if len(id) == 0 {
+		return false
+	}
+	if id[0] != '_' && !unicode.IsLetter(rune(id[0])) {
+		return false
+	}
+	for _, r := range id {
+		if r != '_' && !unicode.IsDigit(r) && !unicode.IsLetter(r) {
+			return false
+		}
+	}
+	return true
+}
+
 func init() {
 	globalVars = make(map[string]string)
 	builtins = map[string]builtin{
@@ -167,8 +183,11 @@ func init() {
 						if len(p) < 2 {
 							fmt.Fprintf(os.Stderr, "malformed declares: %v\n", pair)
 							continue
+						} else if validateID(p[0]) {
+							globalVars[p[0]] = p[1]
+						} else {
+							return "", fmt.Errorf("declare: `%s': not a valid identifier", pair)
 						}
-						globalVars[p[0]] = p[1]
 					}
 				}
 			}
