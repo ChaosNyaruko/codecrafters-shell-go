@@ -147,6 +147,9 @@ type record struct {
 
 func init() {
 	builtins = map[string]builtin{
+		"declare": func(args ...string) (string, error) {
+			return "", nil
+		},
 		"history": func(args ...string) (string, error) {
 			n := len(H.history)
 			all := len(H.history)
