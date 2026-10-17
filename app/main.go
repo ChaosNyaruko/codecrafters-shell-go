@@ -74,7 +74,12 @@ var jobs = &JobsManager{
 	jobs: make([]*Job, 0),
 }
 
-var history []record
+var H History
+
+type History struct {
+	history  []record
+	appendAt int
+}
 
 type record struct {
 	id  int
@@ -84,8 +89,8 @@ type record struct {
 func init() {
 	builtins = map[string]builtin{
 		"history": func(args ...string) (string, error) {
-			n := len(history)
-			all := len(history)
+			n := len(H.history)
+			all := len(H.history)
 			var err error
 			if len(args) > 0 {
 				if args[0] == "-r" && len(args) > 1 {
@@ -105,19 +110,25 @@ func init() {
 					if sc.Err() != nil {
 						return "", sc.Err()
 					}
-					history = slices.Concat(history[len(history)-1:], his)
+					H.history = slices.Concat(H.history[len(H.history)-1:], his)
+					H.appendAt = len(H.history)
 					return "", nil
-				} else if args[0] == "-w" && len(args) > 1 {
+				} else if (args[0] == "-w" || args[0] == "-a") && len(args) > 1 {
 					// write history from a file
 					fname := args[1]
-					hf, e := os.OpenFile(fname, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o666)
+					flags := os.O_RDWR | os.O_CREATE | os.O_TRUNC
+					if args[0] == "-a" { // append mode
+						flags = os.O_RDWR | os.O_CREATE | os.O_APPEND
+					}
+					hf, e := os.OpenFile(fname, flags, 0o666)
 					if e != nil {
 						return "", e
 					}
 					defer hf.Close()
-					for _, r := range history {
+					for _, r := range H.history[H.appendAt:] {
 						fmt.Fprintf(hf, "%s\n", r.cmd)
 					}
+					H.appendAt = len(H.history)
 					return "", nil
 				}
 				n, err = strconv.Atoi(args[0])
@@ -127,7 +138,7 @@ func init() {
 			}
 			rs := []string{}
 			// 10  n=4 [6,10)
-			for _, r := range history[all-n:] {
+			for _, r := range H.history[all-n:] {
 				rs = append(rs, fmt.Sprintf("%4d  %s", r.id, r.cmd))
 			}
 			return strings.Join(rs, "\n") + "\n", nil
@@ -671,8 +682,8 @@ func main() {
 			fmt.Fprintf(os.Stderr, "readline error: %v", err)
 			continue
 		}
-		history = append(history, record{
-			id:  len(history) + 1,
+		H.history = append(H.history, record{
+			id:  len(H.history) + 1,
 			cmd: line,
 		})
 		inputs, err := parseInput(line)

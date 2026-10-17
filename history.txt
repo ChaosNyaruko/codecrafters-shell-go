@@ -1,0 +1,12 @@
+history -w history.txt 
+history -w history.txt 
+ls
+pwd
+history -a history.txt 
+history -w history.txt 
+ls
+pwd
+history -a history.txt 
+ls
+pwd
+history -a history.txt 
