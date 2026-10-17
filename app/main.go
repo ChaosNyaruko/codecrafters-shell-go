@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"fmt"
@@ -87,6 +88,26 @@ func init() {
 			all := len(history)
 			var err error
 			if len(args) > 0 {
+				if args[0] == "-r" && len(args) > 1 {
+					// read history from a file
+					fname := args[1]
+					hf, e := os.OpenFile(fname, os.O_RDONLY, 0o666)
+					if e != nil {
+						return "", e
+					}
+					defer hf.Close()
+					sc := bufio.NewScanner(hf)
+					his := []record{}
+					for sc.Scan() {
+						line := sc.Text()
+						his = append(his, record{len(his) + 1, line})
+					}
+					if sc.Err() != nil {
+						return "", sc.Err()
+					}
+					history = slices.Concat(history[len(history)-1:], his)
+					return "", nil
+				}
 				n, err = strconv.Atoi(args[0])
 				if err != nil {
 					return "", fmt.Errorf("numeric argument required")
