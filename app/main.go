@@ -158,8 +158,18 @@ func init() {
 					if !ok {
 						return "", fmt.Errorf("declare: %s: not found", id)
 					}
-					return v, nil
-
+					return fmt.Sprintf("declare -- %s=%q\n", id, v), nil
+				} else {
+					// should be NAME=VALUE pairs
+					// a="b=c"
+					for _, pair := range args {
+						p := strings.SplitN(pair, "=", 2)
+						if len(p) < 2 {
+							fmt.Fprintf(os.Stderr, "malformed declares: %v\n", pair)
+							continue
+						}
+						globalVars[p[0]] = p[1]
+					}
 				}
 			}
 			return "", nil
