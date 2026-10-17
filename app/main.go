@@ -72,10 +72,21 @@ var jobs = &JobsManager{
 	jobs: make([]*Job, 0),
 }
 
+var history []record
+
+type record struct {
+	id  int
+	cmd string
+}
+
 func init() {
 	builtins = map[string]builtin{
 		"history": func(args ...string) (string, error) {
-			return "", nil
+			rs := []string{}
+			for _, r := range history {
+				rs = append(rs, fmt.Sprintf("%4d  %s", r.id, r.cmd))
+			}
+			return strings.Join(rs, "\n") + "\n", nil
 		},
 		"jobs": func(args ...string) (string, error) {
 			output := jobs.reap(false)
@@ -616,6 +627,10 @@ func main() {
 			fmt.Fprintf(os.Stderr, "readline error: %v", err)
 			continue
 		}
+		history = append(history, record{
+			id:  len(history) + 1,
+			cmd: line,
+		})
 		inputs, err := parseInput(line)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "parse error: %v", err)
