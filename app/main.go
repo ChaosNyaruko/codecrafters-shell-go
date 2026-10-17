@@ -75,6 +75,65 @@ var jobs = &JobsManager{
 }
 
 var H History
+var hFile string
+
+func (h *History) Add(line string) {
+	h.history = append(h.history, record{
+		id:  len(h.history) + 1,
+		cmd: line,
+	})
+}
+
+func (h *History) ReadFromFile(file string, include bool) error {
+	// read history from a file
+	file, err := filepath.Abs(file)
+	if err != nil {
+		return err
+	}
+	hf, e := os.OpenFile(file, os.O_RDONLY, 0o666)
+	if e != nil {
+		return e
+	}
+	defer hf.Close()
+	sc := bufio.NewScanner(hf)
+	his := []record{}
+	for sc.Scan() {
+		line := sc.Text()
+		his = append(his, record{len(his) + 1, line})
+	}
+	if sc.Err() != nil {
+		return sc.Err()
+	}
+	if include {
+		// include the latest "history -r xx" itself
+		H.history = slices.Concat(H.history[len(H.history)-1:], his)
+	} else { // typically at startup, a codecrafters test set HISTFILE as "/dev/null"
+		H.history = his
+	}
+	H.appendAt = len(H.history)
+	return nil
+}
+
+func (h *History) WriteOrAppendToFile(file string, append bool) error {
+	file, err := filepath.Abs(file)
+	if err != nil {
+		return err
+	}
+	flags := os.O_RDWR | os.O_CREATE | os.O_TRUNC
+	if append {
+		flags = os.O_RDWR | os.O_CREATE | os.O_APPEND
+	}
+	hf, e := os.OpenFile(file, flags, 0o666)
+	if e != nil {
+		return e
+	}
+	defer hf.Close()
+	for _, r := range H.history[H.appendAt:] {
+		fmt.Fprintf(hf, "%s\n", r.cmd)
+	}
+	H.appendAt = len(H.history)
+	return nil
+}
 
 type History struct {
 	history  []record
@@ -94,42 +153,9 @@ func init() {
 			var err error
 			if len(args) > 0 {
 				if args[0] == "-r" && len(args) > 1 {
-					// read history from a file
-					fname := args[1]
-					hf, e := os.OpenFile(fname, os.O_RDONLY, 0o666)
-					if e != nil {
-						return "", e
-					}
-					defer hf.Close()
-					sc := bufio.NewScanner(hf)
-					his := []record{}
-					for sc.Scan() {
-						line := sc.Text()
-						his = append(his, record{len(his) + 1, line})
-					}
-					if sc.Err() != nil {
-						return "", sc.Err()
-					}
-					H.history = slices.Concat(H.history[len(H.history)-1:], his)
-					H.appendAt = len(H.history)
-					return "", nil
+					return "", H.ReadFromFile(args[1], true)
 				} else if (args[0] == "-w" || args[0] == "-a") && len(args) > 1 {
-					// write history from a file
-					fname := args[1]
-					flags := os.O_RDWR | os.O_CREATE | os.O_TRUNC
-					if args[0] == "-a" { // append mode
-						flags = os.O_RDWR | os.O_CREATE | os.O_APPEND
-					}
-					hf, e := os.OpenFile(fname, flags, 0o666)
-					if e != nil {
-						return "", e
-					}
-					defer hf.Close()
-					for _, r := range H.history[H.appendAt:] {
-						fmt.Fprintf(hf, "%s\n", r.cmd)
-					}
-					H.appendAt = len(H.history)
-					return "", nil
+					return "", H.WriteOrAppendToFile(args[1], args[0] == "-a")
 				}
 				n, err = strconv.Atoi(args[0])
 				if err != nil {
@@ -211,6 +237,12 @@ func init() {
 			return wd + "\n", nil
 		},
 		"exit": func(...string) (string, error) {
+			if hFile != "" {
+				err := H.WriteOrAppendToFile(hFile, true)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "write history err: %v\n", err)
+				}
+			}
 			os.Exit(0)
 			return "", nil
 		},
@@ -676,16 +708,20 @@ func main() {
 		panic(err)
 	}
 	defer ins.Close()
+	// we don't read a default file like ~/.bash_history
+	if hFile = os.Getenv("HISTFILE"); hFile != "" {
+		err := H.ReadFromFile(hFile, false)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "read HISTFILE at startup err: %v\n", err)
+		}
+	}
 	for {
 		line, err := ins.Readline()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "readline error: %v", err)
 			continue
 		}
-		H.history = append(H.history, record{
-			id:  len(H.history) + 1,
-			cmd: line,
-		})
+		H.Add(line)
 		inputs, err := parseInput(line)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "parse error: %v", err)

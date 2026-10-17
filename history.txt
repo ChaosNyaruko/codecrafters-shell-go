@@ -10,3 +10,4 @@ history -a history.txt
 ls
 pwd
 history -a history.txt 
+exit
