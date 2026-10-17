@@ -473,13 +473,22 @@ func parseInput(lineStr string) ([]Input, error) {
 		case expanding:
 			// read id
 			var id []rune
-			// NOTE: we concats ALL subsequent runes until "space", though it is NOT what real bash behaves.
+			// NOTE: if no braces found, we concats ALL subsequent runes until "space", though it is NOT what real bash behaves.
 			// $HOME2 --> HOME2
 			// real bash: $23 -> $2, shitty rules
 			j := i
+			braced := false
+			if j+1 < len(line) && line[j] == '{' {
+				j += 1
+				braced = true
+			}
 			for j < len(line) {
 				r := line[j]
 				if unicode.IsSpace(r) {
+					break
+				}
+				if braced && r == '}' {
+					j += 1
 					break
 				}
 				id = append(id, r)
