@@ -72,17 +72,117 @@ var jobs = &JobsManager{
 	jobs: make([]*Job, 0),
 }
 
-var builtinSet = map[string]struct{}{
-	"exit":     {},
-	"echo":     {},
-	"type":     {},
-	"pwd":      {},
-	"cd":       {},
-	"complete": {},
-	"jobs":     {},
-}
-
 func init() {
+	builtins = map[string]builtin{
+		"history": func(args ...string) (string, error) {
+			return "", nil
+		},
+		"jobs": func(args ...string) (string, error) {
+			output := jobs.reap(false)
+			return output, nil
+		},
+		"complete": func(args ...string) (string, error) {
+			if len(args) == 0 {
+				return "\n", nil
+			}
+			switch args[0] {
+			case "-r": // -r for reset/removal/unregister
+				if len(args) < 2 {
+					return "-r recevied a <cmd> as argument", nil
+				}
+				delete(compdb.db, args[1])
+				return "", nil
+			case "-p": // -p for print
+				if len(args) < 2 {
+					return "-p recevied a <cmd> as argument", nil
+				}
+				spec, ok := compdb.db[args[1]]
+				if !ok {
+					return fmt.Sprintf("complete: %s: no completion specification\n", args[1]), nil
+				}
+				return spec.String() + "\n", nil
+			case "-C": // -C for custom command
+				if len(args) < 3 {
+					return fmt.Sprintf("-C accepts 2 arguments, but got only %d", len(args[0])), nil
+				}
+				command := args[1]
+				name := args[2]
+				compdb.db[name] = &CompletionCommand{
+					command: command,
+					name:    name,
+				}
+				return "", nil
+			default:
+				return fmt.Sprintf("unsupported 'complete' flag: %v\n", args[0]), nil
+			}
+		},
+		"cd": func(args ...string) (string, error) {
+			if len(args) == 0 {
+				return "\n", nil
+			}
+			path := args[0]
+			var err error
+			var aPath string
+			if strings.TrimSpace(path) == "~" {
+				aPath = os.Getenv("HOME")
+			} else {
+				aPath, err = filepath.Abs(path)
+			}
+			if err != nil {
+				return "", err
+			}
+			err = os.Chdir(aPath)
+			if errors.Is(err, os.ErrNotExist) {
+				return fmt.Sprintf("cd: %s: No such file or directory\n", aPath), nil
+			}
+			return "", err
+		},
+		"pwd": func(...string) (string, error) {
+			wd, err := os.Getwd()
+			if err != nil {
+				return "", err
+			}
+			return wd + "\n", nil
+		},
+		"exit": func(...string) (string, error) {
+			os.Exit(0)
+			return "", nil
+		},
+		"echo": func(args ...string) (string, error) {
+			lf := "\n"
+			echoFrom := 0
+			for _, arg := range args {
+				if strings.HasPrefix(arg, "-") {
+					echoFrom += 1
+					options := strings.TrimPrefix(arg, "-")
+					// BUG: the readline lib doesn't print the echoed text with "-n" if not redirect (i.e. use terminal as stdout)
+					// we should implement our "trailing management and SetPrompt" at proper place
+					if strings.Contains(options, "n") {
+						lf = ""
+					}
+				} else {
+					break
+				}
+			}
+			return fmt.Sprintf("%s%s", strings.Join(args[echoFrom:], " "), lf), nil
+		},
+		"type": func(args ...string) (string, error) {
+			if len(args) == 0 {
+				return "\n", nil
+			}
+			cmd := args[0]
+			_, ok := builtins[cmd]
+			if ok {
+				return fmt.Sprintf("%s is a shell builtin\n", cmd), nil
+			}
+			path, err := exec.LookPath(cmd)
+			if err == nil {
+				return fmt.Sprintf("%s is %s\n", cmd, path), nil
+			}
+			return fmt.Sprintf("%s: not found\n", cmd), nil
+		},
+	}
+
 }
 
 var compdb = &CompleteDB{db: make(map[string]*CompletionCommand)}
@@ -101,112 +201,7 @@ func (cc *CompletionCommand) String() string {
 	return fmt.Sprintf("complete -C '%s' %s", cc.command, cc.name)
 }
 
-var builtins = map[string]builtin{
-	"jobs": func(args ...string) (string, error) {
-		output := jobs.reap(false)
-		return output, nil
-	},
-	"complete": func(args ...string) (string, error) {
-		if len(args) == 0 {
-			return "\n", nil
-		}
-		switch args[0] {
-		case "-r": // -r for reset/removal/unregister
-			if len(args) < 2 {
-				return "-r recevied a <cmd> as argument", nil
-			}
-			delete(compdb.db, args[1])
-			return "", nil
-		case "-p": // -p for print
-			if len(args) < 2 {
-				return "-p recevied a <cmd> as argument", nil
-			}
-			spec, ok := compdb.db[args[1]]
-			if !ok {
-				return fmt.Sprintf("complete: %s: no completion specification\n", args[1]), nil
-			}
-			return spec.String() + "\n", nil
-		case "-C": // -C for custom command
-			if len(args) < 3 {
-				return fmt.Sprintf("-C accepts 2 arguments, but got only %d", len(args[0])), nil
-			}
-			command := args[1]
-			name := args[2]
-			compdb.db[name] = &CompletionCommand{
-				command: command,
-				name:    name,
-			}
-			return "", nil
-		default:
-			return fmt.Sprintf("unsupported 'complete' flag: %v\n", args[0]), nil
-		}
-	},
-	"cd": func(args ...string) (string, error) {
-		if len(args) == 0 {
-			return "\n", nil
-		}
-		path := args[0]
-		var err error
-		var aPath string
-		if strings.TrimSpace(path) == "~" {
-			aPath = os.Getenv("HOME")
-		} else {
-			aPath, err = filepath.Abs(path)
-		}
-		if err != nil {
-			return "", err
-		}
-		err = os.Chdir(aPath)
-		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Sprintf("cd: %s: No such file or directory\n", aPath), nil
-		}
-		return "", err
-	},
-	"pwd": func(...string) (string, error) {
-		wd, err := os.Getwd()
-		if err != nil {
-			return "", err
-		}
-		return wd + "\n", nil
-	},
-	"exit": func(...string) (string, error) {
-		os.Exit(0)
-		return "", nil
-	},
-	"echo": func(args ...string) (string, error) {
-		lf := "\n"
-		echoFrom := 0
-		for _, arg := range args {
-			if strings.HasPrefix(arg, "-") {
-				echoFrom += 1
-				options := strings.TrimPrefix(arg, "-")
-				// BUG: the readline lib doesn't print the echoed text with "-n" if not redirect (i.e. use terminal as stdout)
-				// we should implement our "trailing management and SetPrompt" at proper place
-				if strings.Contains(options, "n") {
-					lf = ""
-				}
-			} else {
-				break
-			}
-		}
-		return fmt.Sprintf("%s%s", strings.Join(args[echoFrom:], " "), lf), nil
-	},
-	"type": func(args ...string) (string, error) {
-		if len(args) == 0 {
-			return "\n", nil
-		}
-		cmd := args[0]
-		_, ok := builtinSet[cmd]
-		if ok {
-			return fmt.Sprintf("%s is a shell builtin\n", cmd), nil
-		}
-		path, err := exec.LookPath(cmd)
-		if err == nil {
-			return fmt.Sprintf("%s is %s\n", cmd, path), nil
-		}
-		return fmt.Sprintf("%s: not found\n", cmd), nil
-	},
-}
+var builtins map[string]builtin
 
 const (
 	normal = iota
@@ -377,7 +372,7 @@ func (cc *CommandCompleter) Do(line []rune, pos int) (newline [][]rune, length i
 	mode, script, cmd, prefix, previous := getCompletionMode(line, pos)
 	switch mode {
 	case completionCmdMode:
-		for cmd := range builtinSet {
+		for cmd := range builtins {
 			if strings.HasPrefix(cmd, string(prefix)) {
 				candidates = append(candidates, cmd+" ")
 				seen[cmd] = struct{}{}

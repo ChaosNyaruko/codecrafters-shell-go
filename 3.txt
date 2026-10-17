@@ -1,0 +1,17 @@
+1.txt
+2.txt
+3.txt
+AGENTS.md
+app
+codecrafters.yml
+error.txt
+go.mod
+go.sum
+main.c
+out.txt
+README.md
+test.py
+xyz_pig
+xyz_pig_rat
+xyz_pig_rat_fox.txt
+your_program.sh
