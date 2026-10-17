@@ -352,6 +352,7 @@ const (
 	singleQuoteStarted
 	doubleQuoteStarted
 	escaping
+	expanding
 )
 
 var normalEscapes = map[rune]rune{
@@ -364,7 +365,6 @@ var quotedEscapes = map[rune]rune{
 	'\'': '\'',
 	'"':  '"',
 	' ':  ' ',
-	'$':  '?', // TODO: we don't support env vars
 }
 
 type Input struct {
@@ -383,14 +383,17 @@ type Task struct {
 	bg     bool
 }
 
-func parseInput(line string) ([]Input, error) {
+func parseInput(lineStr string) ([]Input, error) {
 	status := normal
-	cmdEndAt := len(line)
 	res := make([]Input, 0, 2)
 	beStatus := normal // before escaping status
 	inputs := make([]string, 0, 2)
 	var cur string
-	for i, c := range line {
+	i := 0
+	line := []rune(lineStr)
+	cmdEndAt := len(line)
+	for i < len(line) {
+		c := line[i]
 		switch status {
 		case singleQuoteStarted:
 			beStatus = singleQuoteStarted
@@ -399,6 +402,7 @@ func parseInput(line string) ([]Input, error) {
 			} else {
 				cur += string(c)
 			}
+			i += 1
 		case doubleQuoteStarted:
 			// echo "example  hello"  "test""world"
 			beStatus = doubleQuoteStarted
@@ -409,6 +413,7 @@ func parseInput(line string) ([]Input, error) {
 			} else {
 				cur += string(c)
 			}
+			i += 1
 		case normal:
 			beStatus = normal
 			if c == '"' {
@@ -424,10 +429,13 @@ func parseInput(line string) ([]Input, error) {
 					inputs = append(inputs, cur)
 					cur = ""
 				} else {
+					i += 1
 					continue
 				}
 			} else if c == '\\' {
 				status = escaping
+			} else if c == '$' {
+				status = expanding
 			} else if c == '|' {
 				if cur != "" {
 					if len(inputs) == 0 {
@@ -448,20 +456,46 @@ func parseInput(line string) ([]Input, error) {
 			} else {
 				cur += string(c)
 			}
+			i += 1
 		case escaping:
 			es := normalEscapes
 			if beStatus == doubleQuoteStarted {
 				es = quotedEscapes
 			}
 			escaped, ok := es[c]
-			// TODO: not processing "$" as envs yet
 			if !ok {
 				cur += string(c)
 			} else {
 				cur += string(escaped)
 			}
 			status = beStatus
+			i += 1
+		case expanding:
+			// read id
+			var id []rune
+			// NOTE: we concats ALL subsequent runes until "space", though it is NOT what real bash behaves.
+			// $HOME2 --> HOME2
+			// real bash: $23 -> $2, shitty rules
+			j := i
+			for j < len(line) {
+				r := line[j]
+				if unicode.IsSpace(r) {
+					break
+				}
+				id = append(id, r)
+				j += 1
+			}
+			// fmt.Fprintf(os.Stderr, "expanding: %s\n", string(id))
+			v, ok := globalVars[string(id)]
+			if !ok {
+				v = os.Getenv(string(id))
+			}
+			cur += v
+			i = j
+			// quit and change status
+			status = beStatus
 		default:
+			panic("unreachable")
 		}
 
 	}
