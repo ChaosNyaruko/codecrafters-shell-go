@@ -145,9 +145,23 @@ type record struct {
 	cmd string
 }
 
+var globalVars map[string]string
+
 func init() {
+	globalVars = make(map[string]string)
 	builtins = map[string]builtin{
 		"declare": func(args ...string) (string, error) {
+			if len(args) > 0 {
+				if args[0] == "-p" && len(args) > 1 {
+					id := args[1]
+					v, ok := globalVars[id]
+					if !ok {
+						return "", fmt.Errorf("declare: %s: not found", id)
+					}
+					return v, nil
+
+				}
+			}
 			return "", nil
 		},
 		"history": func(args ...string) (string, error) {
@@ -788,7 +802,7 @@ func main() {
 					func() {
 						output, err := f(args...)
 						if err != nil {
-							fmt.Fprintf(stderr, "%v error: %v\n", cmd, err)
+							fmt.Fprintf(stderr, "%v\n", err)
 						} else {
 							_, _ = fmt.Fprintf(stdout, "%s", output)
 							// if err != nil {
